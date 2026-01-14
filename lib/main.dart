@@ -39,6 +39,8 @@ String get _windowsAudioDevice =>
 String get _windowsAudioBackend => dotenv.env['WINDOWS_AUDIO_BACKEND'] ?? 'dshow';
 String get _windowsAudioSampleRate =>
     dotenv.env['WINDOWS_AUDIO_SAMPLE_RATE'] ?? '';
+bool get _windowsAudioLoopback =>
+    (dotenv.env['WINDOWS_AUDIO_LOOPBACK'] ?? '').toLowerCase() == 'true';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -568,9 +570,17 @@ class _RecordingBarState extends State<RecordingBar> {
         _addLog('Sample rate de captura: $_windowsAudioSampleRate');
         args.addAll(['-sample_rate', _windowsAudioSampleRate]);
       }
+      if (_windowsAudioBackend == 'wasapi' && _windowsAudioLoopback) {
+        _addLog('Captura loopback habilitada (audio de salida)');
+        args.addAll(['-loopback', '1']);
+      }
+      final inputDevice = _windowsAudioBackend == 'wasapi' &&
+              _windowsAudioDevice.toLowerCase() == 'default'
+          ? 'default'
+          : 'audio=$_windowsAudioDevice';
       args.addAll([
         '-i',
-        'audio=$_windowsAudioDevice',
+        inputDevice,
         '-ac',
         '1',
         '-ar',
