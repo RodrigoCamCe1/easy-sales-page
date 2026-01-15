@@ -4,18 +4,23 @@ import 'dart:io';
 import 'dart:typed_data';
 import 'dart:math' as Math;
 
+import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_audio_capture/flutter_audio_capture.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
+import 'package:path/path.dart' as p;
+import 'package:web_socket_channel/io.dart';
 import 'package:window_manager/window_manager.dart';
 
 const double _barHeight = 220.0;
 const String _dartDefineOpenAIKey = String.fromEnvironment('OPENAI_API_KEY');
-const String _openAITranscribeModel = 'gpt-4o-mini-transcribe';
-const String _openAIResponseModel = 'gpt-4o-mini';
+const String _defaultOpenAIRealtimeModel = 'gpt-4o-realtime-preview';
 const bool _showFfmpegLogs = false;
-const bool _saveDebugWav = true;
+const bool _showOpenAIEvents = false;
+const String _promptFileName = 'prompt.txt';
+const int _defaultVadSilenceMs = 1000;
+const int _defaultRealtimeFlushSeconds = 6;
 String get _openAIKey {
   if (_dartDefineOpenAIKey.isNotEmpty) {
     return _dartDefineOpenAIKey;
@@ -26,9 +31,8 @@ String get _openAIKey {
   return '';
 }
 
-String get _elevenLabsApiKey => dotenv.env['ELEVENLABS_API_KEY'] ?? '';
-String get _elevenLabsSttModel =>
-    dotenv.env['ELEVENLABS_STT_MODEL_ID'] ?? 'scribe_v1';
+String get _openAIRealtimeModel =>
+    dotenv.env['OPENAI_REALTIME_MODEL'] ?? _defaultOpenAIRealtimeModel;
 
 String get _systemPrompt =>
     dotenv.env['SYSTEM_PROMPT'] ??
@@ -42,9 +46,48 @@ String get _windowsAudioSampleRate =>
 bool get _windowsAudioLoopback =>
     (dotenv.env['WINDOWS_AUDIO_LOOPBACK'] ?? '').toLowerCase() == 'true';
 
-Future<void> main() async {
+String get _promptFilePath => p.join(Directory.current.path, _promptFileName);
+File get _promptFile => File(_promptFilePath);
+
+int _readIntEnv(String key, int fallback) {
+  final raw = dotenv.env[key];
+  if (raw == null || raw.trim().isEmpty) return fallback;
+  final parsed = int.tryParse(raw.trim());
+  return parsed ?? fallback;
+}
+
+int get _vadSilenceMs =>
+    _readIntEnv('OPENAI_VAD_SILENCE_MS', _defaultVadSilenceMs);
+int get _realtimeFlushSeconds => _readIntEnv(
+      'OPENAI_REALTIME_FLUSH_SECONDS',
+      _defaultRealtimeFlushSeconds,
+    );
+
+Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: '.env');
+
+  if (args.isNotEmpty) {
+    final windowId = int.tryParse(args[0]) ?? 0;
+    Map<String, dynamic> arguments = {};
+    if (args.length > 1) {
+      try {
+        final decoded = jsonDecode(args[1]);
+        if (decoded is Map<String, dynamic>) {
+          arguments = decoded;
+        }
+      } catch (_) {
+        arguments = {};
+      }
+    }
+    runApp(SettingsWindowApp(
+      windowId: windowId,
+      mainWindowId: arguments['mainWindowId'] as int? ?? 0,
+      initialPrompt: arguments['prompt'] as String? ?? _systemPrompt,
+    ));
+    return;
+  }
+
   await windowManager.ensureInitialized();
 
   final flutterView = WidgetsBinding.instance.platformDispatcher.views.first;
@@ -98,125 +141,281 @@ class EasySalesBarApp extends StatelessWidget {
   }
 }
 
-class OpenAITranscribeClient {
-  OpenAITranscribeClient({required this.openAIKey});
+class SettingsWindowApp extends StatelessWidget {
+  const SettingsWindowApp({
+    super.key,
+    required this.windowId,
+    required this.mainWindowId,
+    required this.initialPrompt,
+  });
 
-  final String openAIKey;
+  final int windowId;
+  final int mainWindowId;
+  final String initialPrompt;
 
-  Future<String> transcribe(Uint8List wavBytes) async {
-    final boundary = '----dartform${DateTime.now().microsecondsSinceEpoch}';
-    final uri = Uri.parse('https://api.openai.com/v1/audio/transcriptions');
-    final client = HttpClient();
-    final request = await client.postUrl(uri);
-    request.headers.set('Authorization', 'Bearer $openAIKey');
-    request.headers.set(
-      HttpHeaders.contentTypeHeader,
-      'multipart/form-data; boundary=$boundary',
+  @override
+  Widget build(BuildContext context) {
+    const brightness = Brightness.dark;
+    final colorScheme = ColorScheme.fromSeed(
+      seedColor: Colors.indigo,
+      brightness: brightness,
     );
 
-    void writeField(String name, String value) {
-      request.write('--$boundary\r\n');
-      request.write('Content-Disposition: form-data; name="$name"\r\n\r\n');
-      request.write(value);
-      request.write('\r\n');
-    }
-
-    void writeFile(
-      String name,
-      String filename,
-      String contentType,
-      Uint8List bytes,
-    ) {
-      request.write('--$boundary\r\n');
-      request.write(
-        'Content-Disposition: form-data; name="$name"; filename="$filename"\r\n',
-      );
-      request.write('Content-Type: $contentType\r\n\r\n');
-      request.add(bytes);
-      request.write('\r\n');
-    }
-
-    writeField('model', _openAITranscribeModel);
-    writeField('language', 'es');
-    writeField('response_format', 'json');
-    writeFile('file', 'audio.wav', 'audio/wav', wavBytes);
-    request.write('--$boundary--\r\n');
-
-    final response = await request.close();
-    final body = await response.transform(utf8.decoder).join();
-    client.close();
-
-    if (response.statusCode >= 400) {
-      throw Exception('OpenAI ${response.statusCode}: $body');
-    }
-
-    final decoded = jsonDecode(body);
-    if (decoded is Map && decoded['text'] is String) {
-      return decoded['text'] as String;
-    }
-    return body;
+    return MaterialApp(
+      debugShowCheckedModeBanner: false,
+      title: 'Configuracion',
+      theme: ThemeData(
+        colorScheme: colorScheme,
+        useMaterial3: true,
+        brightness: brightness,
+      ),
+      home: SettingsWindowPage(
+        windowId: windowId,
+        mainWindowId: mainWindowId,
+        initialPrompt: initialPrompt,
+      ),
+    );
   }
 }
 
-class ElevenLabsTranscribeClient {
-  ElevenLabsTranscribeClient({required this.apiKey});
+class SettingsWindowPage extends StatefulWidget {
+  const SettingsWindowPage({
+    super.key,
+    required this.windowId,
+    required this.mainWindowId,
+    required this.initialPrompt,
+  });
 
-  final String apiKey;
+  final int windowId;
+  final int mainWindowId;
+  final String initialPrompt;
 
-  Future<String> transcribe(Uint8List wavBytes) async {
-    final boundary = '----dartform${DateTime.now().microsecondsSinceEpoch}';
-    final uri = Uri.parse('https://api.elevenlabs.io/v1/speech-to-text');
-    final client = HttpClient();
-    final request = await client.postUrl(uri);
-    request.headers.set('xi-api-key', apiKey);
-    request.headers.set(
-      HttpHeaders.contentTypeHeader,
-      'multipart/form-data; boundary=$boundary',
-    );
+  @override
+  State<SettingsWindowPage> createState() => _SettingsWindowPageState();
+}
 
-    void writeField(String name, String value) {
-      request.write('--$boundary\r\n');
-      request.write('Content-Disposition: form-data; name="$name"\r\n\r\n');
-      request.write(value);
-      request.write('\r\n');
+class _SettingsWindowPageState extends State<SettingsWindowPage> {
+  late final TextEditingController _controller;
+
+  @override
+  void initState() {
+    super.initState();
+    _controller = TextEditingController(text: widget.initialPrompt);
+    _loadPromptFromFile();
+  }
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  Future<void> _savePrompt() async {
+    final prompt = _controller.text.trim();
+    if (prompt.isNotEmpty) {
+      await _promptFile.writeAsString(prompt);
     }
-
-    void writeFile(
-      String name,
-      String filename,
-      String contentType,
-      Uint8List bytes,
-    ) {
-      request.write('--$boundary\r\n');
-      request.write(
-        'Content-Disposition: form-data; name="$name"; filename="$filename"\r\n',
-      );
-      request.write('Content-Type: $contentType\r\n\r\n');
-      request.add(bytes);
-      request.write('\r\n');
-    }
-
-    writeField('model_id', _elevenLabsSttModel);
-    writeField('language_code', 'es');
-    writeFile('file', 'audio.wav', 'audio/wav', wavBytes);
-    request.write('--$boundary--\r\n');
-
-    final response = await request.close();
-    final body = await response.transform(utf8.decoder).join();
-    client.close();
-
-    if (response.statusCode >= 400) {
-      throw Exception('ElevenLabs ${response.statusCode}: $body');
-    }
-
-    final decoded = jsonDecode(body);
-    if (decoded is Map) {
-      final text = decoded['text'] ?? decoded['transcript'];
-      if (text is String) {
-        return text;
+    final targetIds = <int>{
+      widget.mainWindowId,
+      0,
+      1,
+    };
+    for (final id in targetIds) {
+      if (id == widget.windowId) continue;
+      try {
+        await DesktopMultiWindow.invokeMethod(
+          id,
+          'updatePrompt',
+          {'prompt': prompt},
+        );
+      } catch (_) {
+        // Best-effort broadcast to the main window.
       }
     }
-    return body;
+  }
+
+  void _openMicPrivacySettings() {
+    if (!Platform.isWindows) return;
+    Process.start('cmd', ['/c', 'start', 'ms-settings:privacy-microphone']);
+  }
+
+  Future<void> _loadPromptFromFile() async {
+    if (!await _promptFile.exists()) return;
+    final content = (await _promptFile.readAsString()).trim();
+    if (content.isEmpty) return;
+    if (!mounted) return;
+    setState(() {
+      _controller.text = content;
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(
+        title: const Text('Configuracion'),
+        actions: [
+          TextButton(
+            onPressed: _savePrompt,
+            child: const Text('Guardar'),
+          ),
+          if (Platform.isWindows)
+            TextButton(
+              onPressed: _openMicPrivacySettings,
+              child: const Text('Mic Windows'),
+            ),
+        ],
+      ),
+      body: Padding(
+        padding: const EdgeInsets.all(16),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Aqui puedes seleccionar la fuente de audio (por ejemplo, un dispositivo loopback) '
+              'y la carpeta de salida. La captura de audio del sistema requiere integrar un '
+              'plugin nativo o usar un dispositivo virtual como VB-Audio/BlackHole.',
+            ),
+            const SizedBox(height: 12),
+            const Text('Prompt del sistema'),
+            const SizedBox(height: 6),
+            Expanded(
+              child: TextField(
+                controller: _controller,
+                maxLines: null,
+                expands: true,
+                decoration: const InputDecoration(
+                  border: OutlineInputBorder(),
+                  hintText: 'Escribe el prompt para la IA...',
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+
+class OpenAIRealtimeClient {
+  OpenAIRealtimeClient({
+    required this.openAIKey,
+    required this.onDelta,
+    this.onComplete,
+  });
+
+  final String openAIKey;
+  final void Function(String) onDelta;
+  final VoidCallback? onComplete;
+
+  IOWebSocketChannel? _channel;
+
+  Future<void> connect() async {
+    final uri =
+        Uri.parse('wss://api.openai.com/v1/realtime?model=$_openAIRealtimeModel');
+    final socket = await WebSocket.connect(
+      uri.toString(),
+      headers: {
+        'Authorization': 'Bearer $openAIKey',
+        'OpenAI-Beta': 'realtime=v1',
+      },
+    );
+    _channel = IOWebSocketChannel(socket);
+    _updateSession();
+    _channel?.stream.listen(
+      _handleMessage,
+      onDone: () {
+        debugPrint('OpenAI WS closed');
+        onComplete?.call();
+      },
+      onError: (error) => debugPrint('OpenAI WS error: $error'),
+    );
+  }
+
+  void _updateSession() {
+    _channel?.sink.add(jsonEncode({
+      'type': 'session.update',
+      'session': {
+        'turn_detection': {
+          'type': 'server_vad',
+          'silence_duration_ms': _vadSilenceMs,
+        },
+      },
+    }));
+  }
+
+  void appendAudio(Uint8List audioChunk) {
+    final encoded = base64Encode(audioChunk);
+    debugPrint('OpenAI appendAudio ${audioChunk.length} bytes');
+    _channel?.sink.add(
+      jsonEncode({
+        'type': 'input_audio_buffer.append',
+        'audio': encoded,
+      }),
+    );
+  }
+
+  Future<void> commitBuffer() async {
+    debugPrint('OpenAI commitBuffer');
+    _channel?.sink.add(jsonEncode({'type': 'input_audio_buffer.commit'}));
+  }
+
+  Future<void> requestResponse({required String instructions}) async {
+    debugPrint('OpenAI requestResponse');
+    _channel?.sink.add(jsonEncode({
+      'type': 'response.create',
+      'response': {
+        'modalities': ['text'],
+        'instructions': instructions,
+      },
+    }));
+  }
+
+  Future<void> close() async {
+    await _channel?.sink.close();
+    _channel = null;
+  }
+
+  void _handleMessage(dynamic event) {
+    if (_showOpenAIEvents) {
+      debugPrint('OpenAI evento raw: $event');
+    }
+    if (event is! String) return;
+    final payload = jsonDecode(event);
+    final type = payload['type'] as String?;
+    if (type == null) return;
+
+    if (type == 'response.delta' || type == 'response.stream') {
+      final delta = payload['delta'] ?? payload['response']?['delta'];
+      final content = delta is Map ? delta['content'] : null;
+      if (content is String && content.isNotEmpty) {
+        onDelta(content);
+      }
+      return;
+    }
+    if (type == 'response.text.delta') {
+      final delta = payload['delta'];
+      if (delta is String && delta.isNotEmpty) {
+        onDelta(delta);
+      }
+      return;
+    }
+    if (type == 'response.output_text.delta') {
+      final delta = payload['delta'];
+      if (delta is String && delta.isNotEmpty) {
+        onDelta(delta);
+      }
+      return;
+    }
+
+    if (type == 'response.completed' ||
+        type == 'response.text.done' ||
+        type == 'response.cancelled' ||
+        type == 'response.done' ||
+        type == 'response.output_text.done') {
+      onComplete?.call();
+    }
   }
 }
 
@@ -231,14 +430,20 @@ class _RecordingBarState extends State<RecordingBar> {
   bool _listening = false;
   Duration _elapsed = Duration.zero;
   Timer? _timer;
+  Timer? _realtimeTimer;
+  final ScrollController _scrollController = ScrollController();
   final FlutterAudioCapture _audioCapture = FlutterAudioCapture();
-  String _aiResponse = '';
+  OpenAIRealtimeClient? _openAIClient;
+  final List<String> _responses = [];
+  String _currentResponse = '';
   String _statusMessage = '';
   Process? _audioProcess;
   StreamSubscription<List<int>>? _audioSubscription;
-  BytesBuilder _audioBuffer = BytesBuilder(copy: false);
-  bool _transcribing = false;
+  int _pendingAudioBytes = 0;
+  bool _responseInFlight = false;
+  bool _finalResponseQueued = false;
   DateTime? _lastLevelLogAt;
+  String _promptOverride = '';
 
   bool get _audioSupported =>
       Platform.isAndroid || Platform.isIOS || Platform.isLinux;
@@ -246,6 +451,45 @@ class _RecordingBarState extends State<RecordingBar> {
   void _addLog(String entry) {
     final timestamp = DateTime.now().toIso8601String();
     debugPrint('[$timestamp] $entry');
+  }
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!_scrollController.hasClients) return;
+      _scrollController.animateTo(
+        _scrollController.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  Future<void> _loadPromptFromFile() async {
+    if (!await _promptFile.exists()) return;
+    final content = (await _promptFile.readAsString()).trim();
+    if (content.isEmpty) return;
+    if (!mounted) return;
+    setState(() {
+      _promptOverride = content;
+    });
+    _addLog('Prompt cargado desde ${_promptFile.path}');
+  }
+
+  @override
+  void initState() {
+    super.initState();
+    _promptOverride = _systemPrompt;
+    _loadPromptFromFile();
+    DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
+      if (call.method == 'updatePrompt') {
+        final args = call.arguments as Map?;
+        final prompt = args?['prompt'] as String? ?? '';
+        setState(() {
+          _promptOverride = prompt.isEmpty ? _systemPrompt : prompt;
+        });
+      }
+      return null;
+    });
   }
 
   Future<void> _startListening() async {
@@ -265,11 +509,22 @@ class _RecordingBarState extends State<RecordingBar> {
       });
     });
 
-    _audioBuffer = BytesBuilder(copy: false);
-    _transcribing = false;
-    _aiResponse = '';
-    _statusMessage = 'Preparando captura de audio';
-    _addLog('Iniciando captura de audio');
+    _pendingAudioBytes = 0;
+    _responseInFlight = false;
+    _finalResponseQueued = false;
+    _responses.clear();
+    _currentResponse = '';
+    _statusMessage = 'Conectando con OpenAI';
+    _addLog('Iniciando sesion con OpenAI');
+    final promptPreview =
+        _promptOverride.length > 120 ? '${_promptOverride.substring(0, 120)}...' : _promptOverride;
+    _addLog('Prompt activo: $promptPreview');
+    _openAIClient = OpenAIRealtimeClient(
+      openAIKey: _openAIKey,
+      onDelta: _appendResponse,
+      onComplete: _handleResponseComplete,
+    );
+    await _openAIClient?.connect();
     setState(() {
       _listening = true;
     });
@@ -312,221 +567,165 @@ class _RecordingBarState extends State<RecordingBar> {
       });
     }
 
+    _realtimeTimer?.cancel();
+    _realtimeTimer = Timer.periodic(
+      Duration(seconds: _realtimeFlushSeconds),
+      (_) => _flushRealtimeResponse(),
+    );
   }
 
   Future<void> _stopListening() async {
     if (!_listening) return;
     _timer?.cancel();
+    _realtimeTimer?.cancel();
+    _realtimeTimer = null;
     if (Platform.isWindows) {
       await _stopWindowsCapture();
     } else if (_audioSupported) {
       _addLog('Deteniendo flutter_audio_capture');
       await _audioCapture.stop();
     }
-    final pcmBytes = _audioBuffer.toBytes();
-    _audioBuffer = BytesBuilder(copy: false);
+    if (_pendingAudioBytes > 0) {
+      await _openAIClient?.commitBuffer();
+      _pendingAudioBytes = 0;
+      if (_responseInFlight) {
+        _finalResponseQueued = true;
+      } else {
+        _responseInFlight = true;
+        await _openAIClient?.requestResponse(instructions: _promptOverride);
+      }
+    }
     setState(() {
       _listening = false;
       _elapsed = Duration.zero;
+      _statusMessage = 'Procesando respuesta';
     });
-    if (pcmBytes.isEmpty) {
-      setState(() {
-        _statusMessage = 'No hay audio para transcribir';
-      });
-      return;
-    }
-    await _requestTranscription(pcmBytes);
   }
 
-  void _openSettings() {
-    showDialog<void>(
-      context: context,
-      builder: (context) {
-        return AlertDialog(
-          title: const Text('Configuración'),
-          content: const Text(
-            'Aquí puedes seleccionar la fuente de audio (por ejemplo, un dispositivo loopback) '
-            'y la carpeta de salida. La captura de audio del sistema requiere integrar un '
-            'plugin nativo o usar un dispositivo virtual como VB-Audio/BlackHole.',
-          ),
-          actions: [
-            if (Platform.isWindows)
-              TextButton(
-                onPressed: _openMicPrivacySettings,
-                child: const Text('Ir a configuraciİn de Windows'),
-              ),
-            TextButton(
-              onPressed: Navigator.of(context).pop,
-              child: const Text('Cerrar'),
-            ),
-          ],
-        );
-      },
-    );
+  Future<void> _openSettings() async {
+    await _loadPromptFromFile();
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    final screenWidth = view.physicalSize.width / view.devicePixelRatio;
+    final screenHeight = view.physicalSize.height / view.devicePixelRatio;
+    final window = await DesktopMultiWindow.createWindow(jsonEncode({
+      'type': 'settings',
+      'mainWindowId': 0,
+      'prompt': _promptOverride,
+    }));
+    window
+      ..setFrame(Rect.fromLTWH(0, 0, screenWidth / 2, screenHeight / 2))
+      ..setTitle('Configuracion')
+      ..show();
   }
+
+
 
   void _openMicPrivacySettings() {
     _addLog('Abriendo configuracion de micrófono en Windows');
     Process.start('cmd', ['/c', 'start', 'ms-settings:privacy-microphone']);
   }
 
-  Future<void> _requestTranscription(Uint8List pcmBytes) async {
-    if (_transcribing) return;
-    _transcribing = true;
+  void _appendResponse(String delta) {
     setState(() {
-      _statusMessage = 'Transcribiendo audio';
+      _currentResponse = '$_currentResponse$delta';
+      _statusMessage = 'Respuesta en pantalla';
     });
+    _scrollToBottom();
+  }
 
-    final wavBytes = _buildWav(pcmBytes, sampleRate: 16000, channels: 1);
-    if (_saveDebugWav) {
-      await _saveDebugWavFile(wavBytes);
+  void _handleResponseComplete() {
+    setState(() {
+      _statusMessage = 'Respuesta completa';
+    });
+    final text = _extractResponseText(_currentResponse);
+    if (text.isNotEmpty) {
+      _responses.add(text);
     }
-    try {
-      final String text;
-      if (_elevenLabsApiKey.isNotEmpty) {
-        _addLog('Usando transcripcion ElevenLabs');
-        final client = ElevenLabsTranscribeClient(apiKey: _elevenLabsApiKey);
-        text = await client.transcribe(wavBytes);
-      } else {
-        _addLog('Usando transcripcion OpenAI');
-        final client = OpenAITranscribeClient(openAIKey: _openAIKey);
-        text = await client.transcribe(wavBytes);
-      }
-      _addLog('Transcripcion recibida: $text');
-      setState(() {
-        _statusMessage = 'Generando respuesta';
-      });
-      try {
-        final responseText = await _requestAssistantResponse(text);
-        setState(() {
-          _aiResponse = responseText;
-          _statusMessage = 'Respuesta en pantalla';
-        });
-        _addLog('Respuesta IA: $responseText');
-      } catch (error) {
-        setState(() {
-          _statusMessage = 'Error de respuesta: $error';
-        });
-        _addLog('Error de respuesta: $error');
-      }
-    } catch (error) {
-      setState(() {
-        _statusMessage = 'Error de transcripcion: $error';
-      });
-      _addLog('Error de transcripcion: $error');
-    } finally {
-      _transcribing = false;
+    _currentResponse = '';
+    _scrollToBottom();
+    _responseInFlight = false;
+    if (!_listening && _finalResponseQueued) {
+      _finalResponseQueued = false;
+      _responseInFlight = true;
+      _openAIClient?.requestResponse(instructions: _promptOverride);
+      return;
+    }
+    if (!_listening) {
+      _openAIClient?.close();
+      _openAIClient = null;
     }
   }
 
-  Future<String> _requestAssistantResponse(String transcript) async {
-    final uri = Uri.parse('https://api.openai.com/v1/responses');
-    final client = HttpClient();
-    final request = await client.postUrl(uri);
-    request.headers.set('Authorization', 'Bearer $_openAIKey');
-    request.headers.set(HttpHeaders.contentTypeHeader, 'application/json');
-    _addLog('SYSTEM_PROMPT: $_systemPrompt');
-    _addLog('USER_TRANSCRIPT: $transcript');
-    final payload = {
-      'model': _openAIResponseModel,
-      'input': [
-        {
-          'role': 'system',
-          'content': [
-            {'type': 'input_text', 'text': _systemPrompt}
-          ],
-        },
-        {
-          'role': 'user',
-          'content': [
-            {'type': 'input_text', 'text': transcript}
-          ],
-        },
-      ],
-    };
-    request.add(utf8.encode(jsonEncode(payload)));
-    final response = await request.close();
-    final body = await response.transform(utf8.decoder).join();
-    client.close();
-
-    if (response.statusCode >= 400) {
-      throw Exception('OpenAI ${response.statusCode}: $body');
+  String _extractResponseText(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    if (trimmed.startsWith('{') && trimmed.contains('llm_generated_text')) {
+      try {
+        final decoded = jsonDecode(trimmed);
+        if (decoded is Map && decoded['llm_generated_text'] is String) {
+          return (decoded['llm_generated_text'] as String).trim();
+        }
+      } catch (_) {
+        // Fall back below.
+      }
     }
-
-    final decoded = jsonDecode(body);
-    final output = decoded is Map ? decoded['output'] : null;
-    if (output is List) {
-      for (final item in output) {
-        if (item is Map && item['content'] is List) {
-          for (final content in item['content']) {
-            if (content is Map && content['type'] == 'output_text') {
-              final text = content['text'];
-              if (text is String && text.isNotEmpty) {
-                return text;
-              }
-            }
-          }
+    if (trimmed.contains('llm_generated_text')) {
+      final idx = trimmed.indexOf('llm_generated_text');
+      var start = trimmed.indexOf('"', idx);
+      start = trimmed.indexOf('"', start + 1);
+      if (start != -1) {
+        final end = trimmed.lastIndexOf('"');
+        if (end > start) {
+          return trimmed.substring(start + 1, end).trim();
         }
       }
     }
-    if (decoded is Map && decoded['output_text'] is String) {
-      return decoded['output_text'] as String;
+    return trimmed;
+  }
+
+  String _extractStreamingText(String raw) {
+    final trimmed = raw.trim();
+    if (trimmed.isEmpty) return '';
+    if (!trimmed.contains('llm_generated_text')) {
+      return trimmed;
     }
-    return body;
+    final idx = trimmed.indexOf('llm_generated_text');
+    var start = trimmed.indexOf('"', idx);
+    start = trimmed.indexOf('"', start + 1);
+    if (start == -1) return trimmed;
+    final end = trimmed.lastIndexOf('"');
+    if (end <= start) return trimmed.substring(start + 1);
+    return trimmed.substring(start + 1, end);
   }
 
-  Uint8List _buildWav(
-    Uint8List pcmBytes, {
-    required int sampleRate,
-    required int channels,
-  }) {
-    const int bitsPerSample = 16;
-    final byteRate = sampleRate * channels * bitsPerSample ~/ 8;
-    final blockAlign = channels * bitsPerSample ~/ 8;
-    final dataSize = pcmBytes.length;
-    final fileSize = 36 + dataSize;
-
-    final buffer = BytesBuilder(copy: false);
-    buffer.add(ascii.encode('RIFF'));
-    buffer.add(_int32le(fileSize));
-    buffer.add(ascii.encode('WAVE'));
-    buffer.add(ascii.encode('fmt '));
-    buffer.add(_int32le(16));
-    buffer.add(_int16le(1));
-    buffer.add(_int16le(channels));
-    buffer.add(_int32le(sampleRate));
-    buffer.add(_int32le(byteRate));
-    buffer.add(_int16le(blockAlign));
-    buffer.add(_int16le(bitsPerSample));
-    buffer.add(ascii.encode('data'));
-    buffer.add(_int32le(dataSize));
-    buffer.add(pcmBytes);
-    return buffer.toBytes();
-  }
-
-  Uint8List _int16le(int value) {
-    final data = ByteData(2);
-    data.setInt16(0, value, Endian.little);
-    return data.buffer.asUint8List();
-  }
-
-  Uint8List _int32le(int value) {
-    final data = ByteData(4);
-    data.setInt32(0, value, Endian.little);
-    return data.buffer.asUint8List();
-  }
-
-  Future<void> _saveDebugWavFile(Uint8List wavBytes) async {
-    final timestamp = DateTime.now().toIso8601String().replaceAll(':', '-');
-    final dir = Directory.systemTemp;
-    final file = File('${dir.path}\\easysales_audio_test_$timestamp.wav');
-    await file.writeAsBytes(wavBytes, flush: true);
-    _addLog('WAV de prueba guardado: ${file.path}');
+  String _buildResponsesText() {
+    final lines = <String>[];
+    for (final response in _responses) {
+      if (response.isNotEmpty) {
+        lines.add(response);
+      }
+    }
+    final current = _extractStreamingText(_currentResponse);
+    if (current.isNotEmpty) {
+      lines.add(current);
+    }
+    if (lines.isEmpty) return '';
+    return lines.map((line) => '- $line').join('\n');
   }
 
   void _appendAudio(Uint8List bytes) {
-    _audioBuffer.add(bytes);
+    _pendingAudioBytes += bytes.length;
+    _openAIClient?.appendAudio(bytes);
     _logAudioLevel(bytes);
+  }
+
+  Future<void> _flushRealtimeResponse() async {
+    if (!_listening || _openAIClient == null) return;
+    if (_responseInFlight || _pendingAudioBytes == 0) return;
+    _responseInFlight = true;
+    _pendingAudioBytes = 0;
+    await _openAIClient?.commitBuffer();
+    await _openAIClient?.requestResponse(instructions: _promptOverride);
   }
 
   void _logAudioLevel(Uint8List bytes) {
@@ -653,7 +852,10 @@ class _RecordingBarState extends State<RecordingBar> {
   @override
   void dispose() {
     _timer?.cancel();
+    _realtimeTimer?.cancel();
+    _scrollController.dispose();
     _audioCapture.stop();
+    _openAIClient?.close();
     if (Platform.isWindows) {
       _audioSubscription?.cancel();
       _audioProcess?.kill();
@@ -771,59 +973,67 @@ class _RecordingBarState extends State<RecordingBar> {
                   const Divider(height: 0),
                   const SizedBox(height: 12),
                   Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          _listening ? 'Escuchando audio del sistema' : 'Listo para escuchar',
-                          style: Theme.of(context).textTheme.titleMedium?.copyWith(
-                                fontWeight: FontWeight.bold,
-                              ),
-                        ),
-                        const SizedBox(height: 6),
-                        Text(
-                          _listening
-                              ? 'Duración: ${_elapsed.inMinutes.toString().padLeft(2, '0')}:${(_elapsed.inSeconds % 60).toString().padLeft(2, '0')}'
-                              : 'Presiona iniciar para comenzar',
-                          style: Theme.of(context)
-                              .textTheme
-                              .labelLarge
-                              ?.copyWith(color: colorScheme.onSurfaceVariant),
-                        ),
-                        Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'Barra flotante',
-                                  style: Theme.of(context).textTheme.bodySmall,
+                    child: SingleChildScrollView(
+                      controller: _scrollController,
+                      physics: const ClampingScrollPhysics(),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            _listening ? 'Escuchando audio del sistema' : 'Listo para escuchar',
+                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                                  fontWeight: FontWeight.bold,
                                 ),
-                                Text(
-                                  _listening ? 'Grabando…' : 'En espera',
-                                  style: Theme.of(context).textTheme.bodySmall?.copyWith(
-                                        color: colorScheme.primary,
-                                      ),
-                                ),
-                              ],
-                            ),
-                            if (_aiResponse.isNotEmpty || _statusMessage.isNotEmpty)
-                                Padding(
-                                  padding: const EdgeInsets.only(top: 6),
-                                  child: Text(
-                                    _aiResponse.isNotEmpty ? _aiResponse : _statusMessage,
-                                    maxLines: 3,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: Theme.of(context)
-                                        .textTheme
-                                        .bodyMedium
-                                        ?.copyWith(color: colorScheme.onSurface),
+                          ),
+                          const SizedBox(height: 6),
+                          Text(
+                            _listening
+                                ? 'Duracion: ${_elapsed.inMinutes.toString().padLeft(2, '0')}:${(_elapsed.inSeconds % 60).toString().padLeft(2, '0')}'
+                                : 'Presiona iniciar para comenzar',
+                            style: Theme.of(context)
+                                .textTheme
+                                .labelLarge
+                                ?.copyWith(color: colorScheme.onSurfaceVariant),
+                          ),
+                          const SizedBox(height: 12),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Row(
+                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                children: [
+                                  Text(
+                                    'Barra flotante',
+                                    style: Theme.of(context).textTheme.bodySmall,
                                   ),
-                                ),
-                          ],
-                        ),
-                      ],
+                                  Text(
+                                    _listening ? 'Grabando' : 'En espera',
+                                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                          color: colorScheme.primary,
+                                        ),
+                                  ),
+                                ],
+                              ),
+                              if (_responses.isNotEmpty ||
+                                  _currentResponse.isNotEmpty ||
+                                  _statusMessage.isNotEmpty)
+                                  Padding(
+                                    padding: const EdgeInsets.only(top: 6),
+                                    child: Text(
+                                      (_responses.isNotEmpty ||
+                                              _currentResponse.isNotEmpty)
+                                          ? _buildResponsesText()
+                                          : _statusMessage,
+                                      style: Theme.of(context)
+                                          .textTheme
+                                          .bodyMedium
+                                          ?.copyWith(color: colorScheme.onSurface),
+                                    ),
+                                  ),
+                            ],
+                          ),
+                        ],
+                      ),
                     ),
                   ),
                 ],
