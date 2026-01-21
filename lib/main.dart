@@ -16,7 +16,7 @@ import 'package:window_manager/window_manager.dart';
 const double _barHeight = 220.0;
 const String _dartDefineOpenAIKey = String.fromEnvironment('OPENAI_API_KEY');
 const String _defaultOpenAIRealtimeModel = 'gpt-4o-realtime-preview';
-const bool _showFfmpegLogs = false;
+const bool _showFfmpegLogs = true;
 const bool _showOpenAIEvents = false;
 const String _promptFileName = 'prompt.txt';
 const int _defaultVadSilenceMs = 1000;
@@ -40,7 +40,9 @@ String get _systemPrompt =>
 
 String get _windowsAudioDevice =>
     dotenv.env['WINDOWS_AUDIO_DEVICE'] ?? 'Stereo Mix (Realtek(R) Audio)';
-String get _windowsAudioBackend => dotenv.env['WINDOWS_AUDIO_BACKEND'] ?? 'dshow';
+String get _windowsMicDevice => dotenv.env['WINDOWS_MIC_DEVICE'] ?? '';
+String get _windowsAudioBackend =>
+    dotenv.env['WINDOWS_AUDIO_BACKEND'] ?? 'dshow';
 String get _windowsAudioSampleRate =>
     dotenv.env['WINDOWS_AUDIO_SAMPLE_RATE'] ?? '';
 bool get _windowsAudioLoopback =>
@@ -91,7 +93,8 @@ Future<void> main(List<String> args) async {
   await windowManager.ensureInitialized();
 
   final flutterView = WidgetsBinding.instance.platformDispatcher.views.first;
-  final screenWidth = flutterView.physicalSize.width / flutterView.devicePixelRatio;
+  final screenWidth =
+      flutterView.physicalSize.width / flutterView.devicePixelRatio;
   final windowOptions = WindowOptions(
     size: Size(screenWidth, _barHeight),
     minimumSize: Size(screenWidth, _barHeight),
@@ -274,7 +277,8 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
             const Text(
               'Aqui puedes seleccionar la fuente de audio (por ejemplo, un dispositivo loopback) '
               'y la carpeta de salida. La captura de audio del sistema requiere integrar un '
-              'plugin nativo o usar un dispositivo virtual como VB-Audio/BlackHole.',
+              'plugin nativo o usar un dispositivo virtual como VB-Audio/BlackHole. '
+              'En Windows puedes definir WINDOWS_MIC_DEVICE para mezclar microfono.',
             ),
             const SizedBox(height: 12),
             const Text('Prompt del sistema'),
@@ -297,7 +301,6 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
   }
 }
 
-
 class OpenAIRealtimeClient {
   OpenAIRealtimeClient({
     required this.openAIKey,
@@ -312,8 +315,8 @@ class OpenAIRealtimeClient {
   IOWebSocketChannel? _channel;
 
   Future<void> connect() async {
-    final uri =
-        Uri.parse('wss://api.openai.com/v1/realtime?model=$_openAIRealtimeModel');
+    final uri = Uri.parse(
+        'wss://api.openai.com/v1/realtime?model=$_openAIRealtimeModel');
     final socket = await WebSocket.connect(
       uri.toString(),
       headers: {
@@ -408,6 +411,13 @@ class OpenAIRealtimeClient {
       }
       return;
     }
+    if (type == 'response.audio_transcript.delta') {
+      final delta = payload['delta'];
+      if (delta is String && delta.isNotEmpty) {
+        onDelta(delta);
+      }
+      return;
+    }
 
     if (type == 'response.completed' ||
         type == 'response.text.done' ||
@@ -444,9 +454,12 @@ class _RecordingBarState extends State<RecordingBar> {
   bool _finalResponseQueued = false;
   DateTime? _lastLevelLogAt;
   String _promptOverride = '';
+  bool _micMixEnabled = false;
 
   bool get _audioSupported =>
       Platform.isAndroid || Platform.isIOS || Platform.isLinux;
+  bool get _windowsMicAvailable =>
+      Platform.isWindows && _windowsMicDevice.trim().isNotEmpty;
 
   void _addLog(String entry) {
     final timestamp = DateTime.now().toIso8601String();
@@ -479,6 +492,7 @@ class _RecordingBarState extends State<RecordingBar> {
   void initState() {
     super.initState();
     _promptOverride = _systemPrompt;
+    _micMixEnabled = _windowsMicAvailable;
     _loadPromptFromFile();
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       if (call.method == 'updatePrompt') {
@@ -516,8 +530,9 @@ class _RecordingBarState extends State<RecordingBar> {
     _currentResponse = '';
     _statusMessage = 'Conectando con OpenAI';
     _addLog('Iniciando sesion con OpenAI');
-    final promptPreview =
-        _promptOverride.length > 120 ? '${_promptOverride.substring(0, 120)}...' : _promptOverride;
+    final promptPreview = _promptOverride.length > 120
+        ? '${_promptOverride.substring(0, 120)}...'
+        : _promptOverride;
     _addLog('Prompt activo: $promptPreview');
     _openAIClient = OpenAIRealtimeClient(
       openAIKey: _openAIKey,
@@ -617,8 +632,6 @@ class _RecordingBarState extends State<RecordingBar> {
       ..setTitle('Configuracion')
       ..show();
   }
-
-
 
   void _openMicPrivacySettings() {
     _addLog('Abriendo configuracion de micrófono en Windows');
@@ -752,6 +765,24 @@ class _RecordingBarState extends State<RecordingBar> {
     _addLog('Audio RMS dBFS: ${db.toStringAsFixed(1)}');
   }
 
+  Future<void> _setMicMixEnabled(bool enabled) async {
+    if (!_windowsMicAvailable && enabled) {
+      setState(() {
+        _statusMessage =
+            'No hay microfono configurado. Define WINDOWS_MIC_DEVICE en .env.';
+      });
+      return;
+    }
+    if (_micMixEnabled == enabled) return;
+    setState(() {
+      _micMixEnabled = enabled;
+    });
+    if (Platform.isWindows && _listening) {
+      await _stopWindowsCapture();
+      await _startWindowsCapture();
+    }
+  }
+
   Future<void> _startWindowsCapture() async {
     if (_windowsAudioDevice.isEmpty) {
       setState(() {
@@ -764,30 +795,65 @@ class _RecordingBarState extends State<RecordingBar> {
 
     try {
       _addLog('Dispositivo de captura: $_windowsAudioDevice');
-      final args = <String>['-f', _windowsAudioBackend];
       if (_windowsAudioSampleRate.isNotEmpty) {
         _addLog('Sample rate de captura: $_windowsAudioSampleRate');
-        args.addAll(['-sample_rate', _windowsAudioSampleRate]);
       }
-      if (_windowsAudioBackend == 'wasapi' && _windowsAudioLoopback) {
-        _addLog('Captura loopback habilitada (audio de salida)');
-        args.addAll(['-loopback', '1']);
+
+      final args = <String>[];
+      String buildInputDevice(String device) {
+        if (_windowsAudioBackend == 'wasapi' &&
+            device.toLowerCase() == 'default') {
+          return 'default';
+        }
+        return 'audio=$device';
       }
-      final inputDevice = _windowsAudioBackend == 'wasapi' &&
-              _windowsAudioDevice.toLowerCase() == 'default'
-          ? 'default'
-          : 'audio=$_windowsAudioDevice';
-      args.addAll([
-        '-i',
-        inputDevice,
-        '-ac',
-        '1',
-        '-ar',
-        '16000',
-        '-f',
-        's16le',
-        '-',
-      ]);
+
+      void addInput(String device, {bool loopback = false}) {
+        args.addAll(['-f', _windowsAudioBackend]);
+        if (_windowsAudioSampleRate.isNotEmpty) {
+          args.addAll(['-sample_rate', _windowsAudioSampleRate]);
+        }
+        if (_windowsAudioBackend == 'wasapi' && loopback) {
+          _addLog('Captura loopback habilitada (audio de salida)');
+          args.addAll(['-loopback', '1']);
+        }
+        args.addAll(['-i', buildInputDevice(device)]);
+      }
+
+      addInput(
+        _windowsAudioDevice,
+        loopback: _windowsAudioBackend == 'wasapi' && _windowsAudioLoopback,
+      );
+
+      final includeMic = _micMixEnabled && _windowsMicDevice.trim().isNotEmpty;
+      if (includeMic) {
+        _addLog('Microfono adicional: $_windowsMicDevice');
+        addInput(_windowsMicDevice);
+      }
+
+      if (includeMic) {
+        args.addAll([
+          '-filter_complex',
+          'amix=inputs=2:duration=longest:dropout_transition=2',
+          '-ac',
+          '1',
+          '-ar',
+          '16000',
+          '-f',
+          's16le',
+          '-',
+        ]);
+      } else {
+        args.addAll([
+          '-ac',
+          '1',
+          '-ar',
+          '16000',
+          '-f',
+          's16le',
+          '-',
+        ]);
+      }
       _audioProcess = await Process.start('ffmpeg', args);
       _addLog('ffmpeg arrancado con $_windowsAudioDevice');
     } catch (error) {
@@ -825,6 +891,7 @@ class _RecordingBarState extends State<RecordingBar> {
       });
     }
   }
+
   Future<void> _stopWindowsCapture() async {
     await _audioSubscription?.cancel();
     _audioSubscription = null;
@@ -866,7 +933,8 @@ class _RecordingBarState extends State<RecordingBar> {
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    Widget navIconButton(IconData icon, String tooltip, VoidCallback? onPressed) {
+    Widget navIconButton(
+        IconData icon, String tooltip, VoidCallback? onPressed) {
       return Container(
         width: 46,
         height: 46,
@@ -893,7 +961,8 @@ class _RecordingBarState extends State<RecordingBar> {
           onPanStart: (_) => windowManager.startDragging(),
           child: Container(
             width: double.infinity,
-            constraints: const BoxConstraints(minHeight: _barHeight, maxHeight: _barHeight),
+            constraints: const BoxConstraints(
+                minHeight: _barHeight, maxHeight: _barHeight),
             decoration: BoxDecoration(
               gradient: LinearGradient(
                 colors: [
@@ -946,6 +1015,20 @@ class _RecordingBarState extends State<RecordingBar> {
                             'Configurar',
                             _openSettings,
                           ),
+                          if (Platform.isWindows) ...[
+                            const SizedBox(width: 12),
+                            TextButton(
+                              onPressed: () => _setMicMixEnabled(false),
+                              child: const Text('Solo PC'),
+                            ),
+                            const SizedBox(width: 4),
+                            TextButton(
+                              onPressed: _windowsMicAvailable
+                                  ? () => _setMicMixEnabled(true)
+                                  : null,
+                              child: const Text('PC + Mic'),
+                            ),
+                          ],
                         ],
                       ),
                       Row(
@@ -980,8 +1063,17 @@ class _RecordingBarState extends State<RecordingBar> {
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
                           Text(
-                            _listening ? 'Escuchando audio del sistema' : 'Listo para escuchar',
-                            style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                            _listening
+                                ? (_micMixEnabled && _windowsMicAvailable
+                                    ? 'Escuchando sistema y microfono'
+                                    : (Platform.isWindows
+                                        ? 'Escuchando audio del sistema'
+                                        : 'Escuchando microfono'))
+                                : 'Listo para escuchar',
+                            style: Theme.of(context)
+                                .textTheme
+                                .titleMedium
+                                ?.copyWith(
                                   fontWeight: FontWeight.bold,
                                 ),
                           ),
@@ -1000,15 +1092,20 @@ class _RecordingBarState extends State<RecordingBar> {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                mainAxisAlignment:
+                                    MainAxisAlignment.spaceBetween,
                                 children: [
                                   Text(
                                     'Barra flotante',
-                                    style: Theme.of(context).textTheme.bodySmall,
+                                    style:
+                                        Theme.of(context).textTheme.bodySmall,
                                   ),
                                   Text(
                                     _listening ? 'Grabando' : 'En espera',
-                                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodySmall
+                                        ?.copyWith(
                                           color: colorScheme.primary,
                                         ),
                                   ),
@@ -1017,19 +1114,20 @@ class _RecordingBarState extends State<RecordingBar> {
                               if (_responses.isNotEmpty ||
                                   _currentResponse.isNotEmpty ||
                                   _statusMessage.isNotEmpty)
-                                  Padding(
-                                    padding: const EdgeInsets.only(top: 6),
-                                    child: Text(
-                                      (_responses.isNotEmpty ||
-                                              _currentResponse.isNotEmpty)
-                                          ? _buildResponsesText()
-                                          : _statusMessage,
-                                      style: Theme.of(context)
-                                          .textTheme
-                                          .bodyMedium
-                                          ?.copyWith(color: colorScheme.onSurface),
-                                    ),
+                                Padding(
+                                  padding: const EdgeInsets.only(top: 6),
+                                  child: Text(
+                                    (_responses.isNotEmpty ||
+                                            _currentResponse.isNotEmpty)
+                                        ? _buildResponsesText()
+                                        : _statusMessage,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .bodyMedium
+                                        ?.copyWith(
+                                            color: colorScheme.onSurface),
                                   ),
+                                ),
                             ],
                           ),
                         ],
