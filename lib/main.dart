@@ -242,6 +242,18 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
     Process.start('cmd', ['/c', 'start', 'ms-settings:privacy-microphone']);
   }
 
+  Future<void> _setMicMix(bool enabled) async {
+    try {
+      await DesktopMultiWindow.invokeMethod(
+        widget.mainWindowId,
+        'setMicMix',
+        {'enabled': enabled},
+      );
+    } catch (_) {
+      // Best-effort control of main window capture.
+    }
+  }
+
   Future<void> _loadPromptFromFile() async {
     if (!await _promptFile.exists()) return;
     final content = (await _promptFile.readAsString()).trim();
@@ -258,10 +270,6 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
       appBar: AppBar(
         title: const Text('Configuracion'),
         actions: [
-          TextButton(
-            onPressed: _savePrompt,
-            child: const Text('Guardar'),
-          ),
           if (Platform.isWindows)
             TextButton(
               onPressed: _openMicPrivacySettings,
@@ -280,9 +288,36 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
               'plugin nativo o usar un dispositivo virtual como VB-Audio/BlackHole. '
               'En Windows puedes definir WINDOWS_MIC_DEVICE para mezclar microfono.',
             ),
-            const SizedBox(height: 12),
-            const Text('Prompt del sistema'),
+            if (Platform.isWindows) ...[
+              const SizedBox(height: 16),
+              const Text('Modo de escucha'),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  TextButton(
+                    onPressed: () => _setMicMix(false),
+                    child: const Text('Solo PC'),
+                  ),
+                  const SizedBox(width: 8),
+                  TextButton(
+                    onPressed: () => _setMicMix(true),
+                    child: const Text('PC + Mic'),
+                  ),
+                ],
+              ),
+            ],
+            const SizedBox(height: 20),
+            Text(
+              'Prompt del sistema',
+              style: Theme.of(context).textTheme.titleMedium?.copyWith(
+                    fontWeight: FontWeight.bold,
+                  ),
+            ),
             const SizedBox(height: 6),
+            const Text(
+              'Escribe aqui el prompt que guia las respuestas de la IA.',
+            ),
+            const SizedBox(height: 10),
             Expanded(
               child: TextField(
                 controller: _controller,
@@ -292,6 +327,14 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
                   border: OutlineInputBorder(),
                   hintText: 'Escribe el prompt para la IA...',
                 ),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              width: double.infinity,
+              child: ElevatedButton(
+                onPressed: _savePrompt,
+                child: const Text('Guardar prompt'),
               ),
             ),
           ],
@@ -502,6 +545,11 @@ class _RecordingBarState extends State<RecordingBar> {
           _promptOverride = prompt.isEmpty ? _systemPrompt : prompt;
         });
       }
+      if (call.method == 'setMicMix') {
+        final args = call.arguments as Map?;
+        final enabled = args?['enabled'] as bool? ?? false;
+        await _setMicMixEnabled(enabled);
+      }
       return null;
     });
   }
@@ -628,7 +676,7 @@ class _RecordingBarState extends State<RecordingBar> {
       'prompt': _promptOverride,
     }));
     window
-      ..setFrame(Rect.fromLTWH(0, 0, screenWidth / 2, screenHeight / 2))
+      ..setFrame(Rect.fromLTWH(0, 0, screenWidth, screenHeight))
       ..setTitle('Configuracion')
       ..show();
   }
@@ -1015,20 +1063,6 @@ class _RecordingBarState extends State<RecordingBar> {
                             'Configurar',
                             _openSettings,
                           ),
-                          if (Platform.isWindows) ...[
-                            const SizedBox(width: 12),
-                            TextButton(
-                              onPressed: () => _setMicMixEnabled(false),
-                              child: const Text('Solo PC'),
-                            ),
-                            const SizedBox(width: 4),
-                            TextButton(
-                              onPressed: _windowsMicAvailable
-                                  ? () => _setMicMixEnabled(true)
-                                  : null,
-                              child: const Text('PC + Mic'),
-                            ),
-                          ],
                         ],
                       ),
                       Row(
