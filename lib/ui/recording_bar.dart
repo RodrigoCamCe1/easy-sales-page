@@ -79,7 +79,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
   bool _responseInFlight = false;
   bool _finalResponseQueued = false;
-  int? _streamingAssistantIndex; 
+  int? _streamingAssistantIndex;
   String _streamingAssistantText = '';
   bool _assistantStreamStarted = false;
   DateTime? _lastLevelLogAt;
@@ -92,13 +92,15 @@ class _RecordingBarState extends State<RecordingBar> {
 
   bool _showTranscript = false;
   bool _isRealBarWindow() {
-  // La barra solo existe cuando fue creada con type=bar
-  // Settings nunca debería ejecutar esto
-  return true; 
-}
+    // La barra solo existe cuando fue creada con type=bar
+    // Settings nunca debería ejecutar esto
+    return true;
+  }
 
-  bool get _audioSupported => Platform.isAndroid || Platform.isIOS || Platform.isLinux;
-  bool get _windowsMicAvailable => Platform.isWindows && windowsMicDevice.trim().isNotEmpty;
+  bool get _audioSupported =>
+      Platform.isAndroid || Platform.isIOS || Platform.isLinux;
+  bool get _windowsMicAvailable =>
+      Platform.isWindows && windowsMicDevice.trim().isNotEmpty;
 
   void _addLog(String entry) {
     final timestamp = DateTime.now().toIso8601String();
@@ -115,19 +117,21 @@ class _RecordingBarState extends State<RecordingBar> {
       );
     });
   }
-    void _toggleTranscript() {
-      setState(() {
-        _showTranscript = !_showTranscript;
-        if (_showTranscript) _showSuggestions = false;
-      });
-    }
 
-    void _toggleSuggestions() {
-      setState(() {
-        _showSuggestions = !_showSuggestions;
-        if (_showSuggestions) _showTranscript = false;
-      });
-    }
+  void _toggleTranscript() {
+    setState(() {
+      _showTranscript = !_showTranscript;
+      if (_showTranscript) _showSuggestions = false;
+    });
+  }
+
+  void _toggleSuggestions() {
+    setState(() {
+      _showSuggestions = !_showSuggestions;
+      if (_showSuggestions) _showTranscript = false;
+    });
+  }
+
   Future<void> _loadPromptFromFile() async {
     if (!await promptFile.exists()) return;
     final content = (await promptFile.readAsString()).trim();
@@ -138,37 +142,37 @@ class _RecordingBarState extends State<RecordingBar> {
     });
     _addLog('Prompt cargado desde ${promptFile.path}');
   }
-@override
-void initState() {
-  super.initState();
 
-  _promptOverride = systemPrompt;
-  _micMixEnabled = _windowsMicAvailable;
-  _loadPromptFromFile();
+  @override
+  void initState() {
+    super.initState();
 
-  // ✅ Esto siempre debe ejecutarse SOLO en la ventana BAR
-  _notifyBarOpened();
+    _promptOverride = systemPrompt;
+    _micMixEnabled = _windowsMicAvailable;
+    _loadPromptFromFile();
 
-  DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
-    if (call.method == 'updatePrompt') {
-      final args = call.arguments as Map?;
-      final prompt = args?['prompt'] as String? ?? '';
-      setState(() {
-        _promptOverride = prompt.isEmpty ? systemPrompt : prompt;
-      });
-      _openAIClient?.updateSessionInstructions(_promptOverride);
-    }
+    // ✅ Esto siempre debe ejecutarse SOLO en la ventana BAR
+    _notifyBarOpened();
 
-    if (call.method == 'setMicMix') {
-      final args = call.arguments as Map?;
-      final enabled = args?['enabled'] as bool? ?? false;
-      await _setMicMixEnabled(enabled);
-    }
+    DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
+      if (call.method == 'updatePrompt') {
+        final args = call.arguments as Map?;
+        final prompt = args?['prompt'] as String? ?? '';
+        setState(() {
+          _promptOverride = prompt.isEmpty ? systemPrompt : prompt;
+        });
+        _openAIClient?.updateSessionInstructions(_promptOverride);
+      }
 
-    return null;
-  });
-}
+      if (call.method == 'setMicMix') {
+        final args = call.arguments as Map?;
+        final enabled = args?['enabled'] as bool? ?? false;
+        await _setMicMixEnabled(enabled);
+      }
 
+      return null;
+    });
+  }
 
   Future<void> _notifyBarOpened() async {
     try {
@@ -184,7 +188,7 @@ void initState() {
 
   Future<void> _startListening() async {
     if (_listening) return;
-       await _loadPromptFromFile(); 
+    await _loadPromptFromFile();
     if (openAIKey.isEmpty) {
       setState(() {
         _statusMessage =
@@ -249,7 +253,8 @@ void initState() {
         }
         await _audioCapture.start(
           (data) {
-            final audioSource = (data as Iterable).cast<double>().toList(growable: false);
+            final audioSource =
+                (data as Iterable).cast<double>().toList(growable: false);
             final audioBytes = _floatTo16(audioSource);
             _appendAudio(audioBytes);
           },
@@ -395,33 +400,69 @@ void initState() {
   // ✅ STREAMING
   // ============================
 
-  
-void _appendResponseDelta(String delta) {
+  void _appendResponseDelta(String delta) {
   if (delta.isEmpty) return;
 
   setState(() {
     _currentResponse += delta;
     _statusMessage = 'Respuesta en pantalla';
 
-    // Crea/actualiza burbuja "en vivo" del asistente
+    // Crea burbuja "en vivo"
     if (!_assistantStreamStarted) {
       _assistantStreamStarted = true;
-      _streamingAssistantText = '';
       _chatResponses.add(_ChatMessage(role: 'assistant', text: ''));
       _streamingAssistantIndex = _chatResponses.length - 1;
     }
 
-    _streamingAssistantText += delta;
+    // ✅ Pintar SOLO chat válido (no preguntas sugeridas)
+    _streamingAssistantText = _buildStreamingChatPreview(_currentResponse);
 
-    // Refresca el texto visible de esa burbuja
     final idx = _streamingAssistantIndex;
     if (idx != null && idx >= 0 && idx < _chatResponses.length) {
+      // Si todavía no hay nada “chat válido”, no muestres basura
+      final visible = _streamingAssistantText.trim();
       _chatResponses[idx] =
-          _ChatMessage(role: 'assistant', text: _streamingAssistantText);
+          _ChatMessage(role: 'assistant', text: visible.isEmpty ? '...' : visible);
     }
   });
 
   _scrollToBottom(_chatScrollController);
+}
+
+
+  String _buildStreamingChatPreview(String raw) {
+  if (raw.trim().isEmpty) return '';
+
+  final text = _extractResponseText(raw);
+
+  // 1) Normaliza saltos de línea y corta por líneas
+  final lines = text.split('\n');
+
+  // 2) Quedate solo con líneas que sean “CHAT prefix”
+  final kept = <String>[];
+  for (final line in lines) {
+    final t = line.trim();
+    if (t.isEmpty) continue;
+
+    // Nunca mostrar preguntas sugeridas en el chat en vivo
+    if (t.toLowerCase().startsWith(_suggestionPrefix.toLowerCase())) continue;
+
+    final n = _normalizeChatLine(t); // devuelve '' si no es prefijo válido
+    if (n.isNotEmpty) kept.add(n);
+  }
+
+  // 3) Dedup simple manteniendo orden
+  final seen = <String>{};
+  final out = <String>[];
+  for (final l in kept) {
+    if (seen.add(l)) out.add(l);
+  }
+
+  // 4) Mostramos máximo 4 líneas (tu regla)
+  if (out.length > 4) {
+    return out.take(4).join('\n');
+  }
+  return out.join('\n');
 }
 
 
@@ -431,11 +472,18 @@ void _appendResponseDelta(String delta) {
     setState(() {
       _currentTranscript += text;
 
-      // Si el cliente ya metió \n (completed), cortamos en bloques bonitos
+      // cortamos por saltos de línea (cuando el engine los mande)
       while (_currentTranscript.contains('\n')) {
         final idx = _currentTranscript.indexOf('\n');
         final chunk = _currentTranscript.substring(0, idx).trim();
-        if (chunk.isNotEmpty) _transcripts.add(chunk);
+
+        final cleaned = _cleanTranscriptChunk(chunk);
+        if (cleaned != null) {
+          if (_transcripts.isEmpty || _transcripts.last != cleaned) {
+            _transcripts.add(cleaned);
+          }
+        }
+
         _currentTranscript = _currentTranscript.substring(idx + 1);
       }
     });
@@ -443,7 +491,6 @@ void _appendResponseDelta(String delta) {
     _scrollToBottom(_transcriptScrollController);
   }
 
-  
   List<String> _splitChatIntoBubbles(String chatBlock) {
     final out = <String>[];
     for (final line in chatBlock.split('\n')) {
@@ -469,83 +516,123 @@ void _appendResponseDelta(String delta) {
     _chatResponses.add(_ChatMessage(role: 'assistant', text: t));
   }
 
-  
-void _handleResponseComplete() {
-  setState(() {
-    _statusMessage = 'Respuesta completa';
-  });
+  void _handleResponseComplete() {
+    setState(() {
+      _statusMessage = 'Respuesta completa';
+    });
 
-  // 1) Parse del output completo (CHAT + SUGERENCIAS)
-  final parsed = _parseAssistantOutput(_currentResponse);
+    final parsed = _parseAssistantOutput(_currentResponse);
 
-  final suggestions = (parsed['suggestions'] as List<String>);
-  if (suggestions.isNotEmpty) {
-    setState(() => _suggestions.addAll(suggestions));
-  }
+    // ====== SUGERENCIAS (dedup global) ======
+    final suggestions = (parsed['suggestions'] as List<String>);
+    if (suggestions.isNotEmpty) {
+      final existing = _suggestions.map((e) => e.trim().toLowerCase()).toSet();
+      final toAdd = <String>[];
 
-  // 2) Quitamos la burbuja "en vivo" (streaming) para reemplazarla por burbujas finales
-  setState(() {
-    final idx = _streamingAssistantIndex;
-    if (idx != null && idx >= 0 && idx < _chatResponses.length) {
-      _chatResponses.removeAt(idx);
+      for (final s in suggestions) {
+        final ns = _normalizeSuggestion(s).trim();
+        if (ns.isEmpty) continue;
+        final key = ns.toLowerCase();
+        if (existing.add(key)) toAdd.add(ns);
+      }
+
+      if (toAdd.isNotEmpty) {
+        setState(() => _suggestions.addAll(toAdd));
+      }
     }
-    _streamingAssistantIndex = null;
-    _streamingAssistantText = '';
-    _assistantStreamStarted = false;
-  });
 
-  // 3) CHAT -> múltiples burbujas (una por línea)
-  final chat = (parsed['chat'] as String).trim();
-  if (chat.isNotEmpty) {
-    final lines = chat
-        .split('\n')
-        .map((e) => e.trim())
-        .where((e) => e.isNotEmpty)
-        .toList();
+    // ====== CHAT ======
+    final chat = (parsed['chat'] as String).trim();
+
+    final finalLines = <String>[];
+    if (chat.isNotEmpty) {
+      final rawLines = chat
+          .split('\n')
+          .map((e) => e.trim())
+          .where((e) => e.isNotEmpty)
+          .toList();
+
+      final normalized = <String>[];
+      for (final l in rawLines) {
+        final n = _normalizeChatLine(l);
+        if (n.isNotEmpty) normalized.add(n);
+      }
+
+      // dedup dentro del bloque manteniendo orden
+      final seen = <String>{};
+      for (final l in normalized) {
+        if (seen.add(l)) finalLines.add(l);
+      }
+    }
 
     setState(() {
-      for (final line in lines) {
-        // mini-fix: evita duplicado consecutivo exacto
-        if (_chatResponses.isNotEmpty &&
-            _chatResponses.last.role == 'assistant' &&
-            _chatResponses.last.text.trim() == line) {
-          continue;
+      final idx = _streamingAssistantIndex;
+
+      // Si NO pudimos parsear chatLines, NO borres la burbuja streaming:
+      // úsala como mensaje final (para que no “desaparezca”)
+      if (finalLines.isEmpty) {
+        if (idx != null && idx >= 0 && idx < _chatResponses.length) {
+          final fallback = _streamingAssistantText.trim();
+          if (fallback.isNotEmpty) {
+            _chatResponses[idx] =
+                _ChatMessage(role: 'assistant', text: fallback);
+          }
         }
-        _chatResponses.add(_ChatMessage(role: 'assistant', text: line));
+      } else {
+        // Si SÍ hay chatLines, reemplaza la burbuja streaming por líneas finales
+        if (idx != null && idx >= 0 && idx < _chatResponses.length) {
+          _chatResponses.removeAt(idx);
+        }
+        for (final line in finalLines) {
+          if (_chatResponses.isNotEmpty &&
+              _chatResponses.last.role == 'assistant' &&
+              _chatResponses.last.text.trim() == line) {
+            continue;
+          }
+          _chatResponses.add(_ChatMessage(role: 'assistant', text: line));
+        }
       }
+
+      _streamingAssistantIndex = null;
+      _streamingAssistantText = '';
+      _assistantStreamStarted = false;
     });
+
+    // Limpia acumuladores del turno
+    _currentResponse = '';
+
+    // ====== TRANSCRIPT final ======
+    final transcript = _currentTranscript.trim();
+    final cleanedFinal = _cleanTranscriptChunk(transcript);
+    if (cleanedFinal != null) {
+      setState(() {
+        if (_transcripts.isEmpty || _transcripts.last != cleanedFinal) {
+          _transcripts.add(cleanedFinal);
+        }
+      });
+    }
+    _currentTranscript = '';
+
+    _scrollToBottom(_chatScrollController);
+    _scrollToBottom(_suggestionScrollController);
+
+    setState(() {
+      _responseInFlight = false;
+    });
+
+    if (!_listening && _finalResponseQueued) {
+      _finalResponseQueued = false;
+      setState(() => _responseInFlight = true);
+      _openAIClient?.requestResponse(instructions: _buildChatInstructions());
+      return;
+    }
+
+    if (!_listening) {
+      _openAIClient?.close();
+      _openAIClient = null;
+      _maybeSaveConversation();
+    }
   }
-
-  // 4) Limpia acumuladores del turno
-  _currentResponse = '';
-
-  // 5) Transcript: corta bloque cuando termina respuesta (tal cual ya lo tenías)
-  final transcript = _currentTranscript.trim();
-  if (transcript.isNotEmpty) {
-    setState(() => _transcripts.add(transcript));
-  }
-  _currentTranscript = '';
-
-  _scrollToBottom(_chatScrollController);
-  _scrollToBottom(_suggestionScrollController);
-
-  setState(() {
-    _responseInFlight = false;
-  });
-
-  if (!_listening && _finalResponseQueued) {
-    _finalResponseQueued = false;
-    setState(() => _responseInFlight = true);
-    _openAIClient?.requestResponse(instructions: _buildChatInstructions());
-    return;
-  }
-
-  if (!_listening) {
-    _openAIClient?.close();
-    _openAIClient = null;
-    _maybeSaveConversation();
-  }
-}
 
   // ============================
   // ✅ SAVE CONVERSATION
@@ -583,7 +670,131 @@ void _handleResponseComplete() {
     if (trimmed.isEmpty) return 'Conversación';
     final words = trimmed.split(RegExp(r'\s+'));
     final titleWords = words.take(6).join(' ');
-    return titleWords.length > 42 ? '${titleWords.substring(0, 42)}…' : titleWords;
+    return titleWords.length > 42
+        ? '${titleWords.substring(0, 42)}…'
+        : titleWords;
+  }
+  // ============================
+// ✅ NORMALIZADORES (anti-duplicados / limpieza)
+// ============================
+
+  static const List<String> _chatPrefixes = [
+    'Respuesta sugerida:',
+    'Objeción detectada:',
+    'Objecion detectada:', // por si el modelo no pone tilde
+    'Momento de cierre:',
+  ];
+
+  static const String _suggestionPrefix = 'Pregunta sugerida:';
+
+  String _normalizeChatLine(String line) {
+    var t = line.trim();
+    if (t.isEmpty) return '';
+
+    // Solo permitimos líneas que empiecen con prefijos de CHAT
+    final prefix = _chatPrefixes.firstWhere(
+      (p) => t.toLowerCase().startsWith(p.toLowerCase()),
+      orElse: () => '',
+    );
+    if (prefix.isEmpty) return '';
+
+    // Caso: "Respuesta sugerida: X Respuesta sugerida: X"
+    final second = t.toLowerCase().indexOf(prefix.toLowerCase(), prefix.length);
+    if (second != -1) {
+      final a = t.substring(prefix.length, second).trim();
+      final b = t.substring(second + prefix.length).trim();
+      if (a.isNotEmpty && (a == b || b.startsWith(a))) {
+        return '$prefix $a';
+      }
+      if (a.isNotEmpty) return '$prefix $a';
+    }
+
+    t = t.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+    return t;
+  }
+
+  String _normalizeSuggestion(String s) {
+    var t = s.trim();
+    t = t.replaceAll('👉', '').replaceAll('💡', '').trim();
+
+    // Si viene "Pregunta sugerida: ..." quedarnos solo con el valor
+    final lower = t.toLowerCase();
+    final i = lower.indexOf('pregunta sugerida:');
+    if (i != -1) {
+      t = t.substring(i + 'pregunta sugerida:'.length).trim();
+    }
+
+    // Opcional: cortar muy largas
+    if (t.length > 180) t = t.substring(0, 180).trim();
+
+    return t;
+  }
+
+  String _collapseImmediateRepeat(String t) {
+    var s = t.trim();
+    if (s.isEmpty) return s;
+
+    // Normalización ligera para comparar (sin destruir el original)
+    String norm(String x) =>
+        x.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
+
+    // Si el texto es literalmente "A A" separado por espacio / puntuación
+    // intentamos encontrar el mejor corte posible.
+    final tokens = s.split(RegExp(r'\s+'));
+    if (tokens.length < 2) return s;
+
+    // Probamos varios tamaños de bloque (desde 1 token hasta la mitad)
+    final maxBlock = (tokens.length / 2).floor();
+    final normTokens = tokens.map(norm).toList();
+
+    for (int block = 1; block <= maxBlock; block++) {
+      // Compara bloque inicial vs bloque siguiente del mismo tamaño
+      bool equal = true;
+      for (int i = 0; i < block; i++) {
+        if (normTokens[i] != normTokens[i + block]) {
+          equal = false;
+          break;
+        }
+      }
+      if (equal) {
+        // Devuelve la primera mitad real (sin normalizar)
+        return tokens.take(block).join(' ').trim();
+      }
+    }
+
+    return s;
+  }
+
+  String? _cleanTranscriptChunk(String chunk) {
+    var t = chunk.trim();
+    if (t.isEmpty) return null;
+
+    final lower = t.toLowerCase();
+
+    // Basura típica que se cuela en transcript
+    final looksLikeContext = lower == '###' ||
+        lower.startsWith('context:') ||
+        lower.startsWith('###context') ||
+        lower == 'context';
+
+    final looksLikeInstruction =
+        lower.contains('transcribe únicamente en español') ||
+            lower.contains('transcribe unicamente en espanol');
+
+    if (looksLikeContext || looksLikeInstruction) return null;
+
+    // Colapsa repetición inmediata de frases: "Gracias. Gracias."
+    t = t.replaceAllMapped(
+      RegExp(r'(\b\w+[.!?])\1+'),
+      (m) => m.group(1)!,
+    );
+    // Colapsa repetición inmediata (tu helper)
+    t = _collapseImmediateRepeat(t);
+
+    // Normaliza espacios
+    t = t.replaceAll(RegExp(r'\s{2,}'), ' ').trim();
+
+    return t.isEmpty ? null : t;
   }
 
   // ============================
@@ -639,11 +850,9 @@ void _handleResponseComplete() {
     return trimmed;
   }
 
-  String _cleanChatText(String raw) {
+  String _cleanChatSectionText(String raw) {
     var cleaned = _cleanAssistantText(raw);
     if (cleaned.isEmpty) return '';
-
-    cleaned = _stripSuggestionLines(cleaned);
 
     cleaned = cleaned.replaceAll(
       RegExp(r'^CHAT:\s*$', caseSensitive: false, multiLine: true),
@@ -654,52 +863,46 @@ void _handleResponseComplete() {
       '',
     );
 
-    // Limpieza extra
+    cleaned = cleaned.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
+    return cleaned;
+  }
+
+// Esto queda para el “modo fallback” (cuando NO hay secciones)
+  String _cleanLooseText(String raw) {
+    var cleaned = _cleanAssistantText(raw);
+    if (cleaned.isEmpty) return '';
+    cleaned = _stripSuggestionLines(cleaned);
     cleaned = cleaned.replaceAll(RegExp(r'\n{3,}'), '\n\n').trim();
     return cleaned;
   }
 
   String? _extractSuggestionFromLine(String line) {
-    var trimmed = line.trim();
-    if (trimmed.isEmpty) return null;
+    var t = line.trim();
+    if (t.isEmpty) return null;
 
-    if (trimmed.contains('{') || trimmed.contains('tool_calls')) return null;
+    // si viene basura/tool_calls/json, fuera
+    if (t.contains('{') || t.toLowerCase().contains('tool_calls')) return null;
 
-    trimmed = trimmed.replaceAll(RegExp(r'^[•\-\*\d\)\.]+\s*'), '');
-    trimmed = trimmed.replaceAll('👉', '').trim();
-    trimmed = trimmed.replaceAll('💡', '').trim();
+    // normaliza bullets/emojis
+    t = t.replaceAll(RegExp(r'^[•\-\*\d\)\.]+\s*'), '').trim();
+    t = t
+        .replaceAll('👉', '')
+        .replaceAll('💡', '')
+        .replaceAll('⚠️', '')
+        .replaceAll('✅', '')
+        .trim();
 
-    final lower = trimmed.toLowerCase().replaceAll(' ', '');
-
-    if (lower == 'chat:' ||
-        lower == 'sugerencias:' ||
-        lower == 'chat' ||
-        lower == 'sugerencias') {
-      return null;
-    }
-
-    if (lower.startsWith('preguntasugerida:') ||
-        lower.startsWith('preguntasugerida') ||
-        lower.startsWith('preguntasugerida:“') ||
-        lower.startsWith('preguntasugerida:"') ||
-        trimmed.toLowerCase().contains('pregunta sugerida:') ||
-        trimmed.toLowerCase().contains('preguntasugerida:')) {
-      final parts = trimmed.split(':');
-      if (parts.length < 2) return null;
-      var value = parts.sublist(1).join(':').trim();
-
-      value = value.replaceAll('“', '').replaceAll('”', '');
-      value = value.replaceAll('"', '').trim();
-
+    // SOLO acepta preguntas con el prefijo exacto
+    if (t.startsWith(_suggestionPrefix)) {
+      var value = t.substring(_suggestionPrefix.length).trim();
+      value = value
+          .replaceAll('“', '')
+          .replaceAll('”', '')
+          .replaceAll('"', '')
+          .trim();
       if (value.isEmpty) return null;
       if (value.length > 240) value = value.substring(0, 240);
-      return value;
-    }
-
-    final isShort = trimmed.length <= 120;
-    final looksQuestion = trimmed.contains('?') || trimmed.contains('¿');
-    if (isShort && looksQuestion) {
-      return trimmed;
+      return '$_suggestionPrefix $value';
     }
 
     return null;
@@ -708,149 +911,213 @@ void _handleResponseComplete() {
   String _stripSuggestionLines(String raw) {
     final lines = raw.split('\n');
     final kept = <String>[];
+
     for (final line in lines) {
-      final trimmed = line.trimRight();
+      final trimmed = line.trim();
+
       if (trimmed.isEmpty) {
-        kept.add(line);
+        kept.add('');
         continue;
       }
-      if (_extractSuggestionFromLine(trimmed) != null) continue;
-      kept.add(line);
+
+      // ❌ Nunca dejar pasar preguntas en CHAT
+      if (trimmed.startsWith('Pregunta sugerida:')) {
+        continue;
+      }
+
+      // ✅ Solo líneas de chat válidas
+      for (final p in _chatPrefixes) {
+        if (trimmed.startsWith(p)) {
+          kept.add(trimmed);
+          break;
+        }
+      }
     }
+
     return kept.join('\n').trim();
   }
 
   Map<String, dynamic> _parseAssistantOutput(String raw) {
-    final text = _extractResponseText(raw);
+    final text = _extractResponseText(raw).trim();
     if (text.isEmpty) {
       return {'chat': '', 'suggestions': <String>[]};
     }
 
     final lines = text.split('\n');
 
-    var chatIndex = -1;
-    var suggestionIndex = -1;
+    int chatIndex = -1;
+    int suggestionIndex = -1;
 
     final chatLabel = RegExp(r'^CHAT\s*:?\s*$', caseSensitive: false);
-    final suggestionsLabel = RegExp(r'^SUGERENCIAS\s*:?\s*$', caseSensitive: false);
+    final suggestionsLabel =
+        RegExp(r'^SUGERENCIAS\s*:?\s*$', caseSensitive: false);
 
     for (var i = 0; i < lines.length; i++) {
       final label = lines[i].trim();
-      if (chatLabel.hasMatch(label)) {
-        chatIndex = i;
-        continue;
-      }
-      if (suggestionsLabel.hasMatch(label)) {
-        suggestionIndex = i;
-        continue;
-      }
+      if (chatLabel.hasMatch(label)) chatIndex = i;
+      if (suggestionsLabel.hasMatch(label)) suggestionIndex = i;
     }
 
-    // Si no hay secciones, igual intenta rescatar sugerencias y chat
+    // Helpers
+    bool _isChatPrefix(String line) {
+      final t = line.trimLeft();
+      for (final p in _chatPrefixes) {
+        if (t.toLowerCase().startsWith(p.toLowerCase())) return true;
+      }
+      return false;
+    }
+
+    bool _isSuggestionPrefix(String line) {
+      final t = line.trimLeft();
+      return t.toLowerCase().startsWith(_suggestionPrefix.toLowerCase());
+    }
+
+    String _stripPrefix(String line, String prefix) {
+      final t = line.trim();
+      if (t.length <= prefix.length) return '';
+      return t.substring(prefix.length).trim();
+    }
+
+    // ---- Caso A: No hay secciones CHAT/SUGERENCIAS -> clasifica por prefijos
     if (chatIndex == -1 && suggestionIndex == -1) {
+      final chatOut = <String>[];
+      final sugOut = <String>[];
+
+      for (final line in lines) {
+        final t = line.trim();
+        if (t.isEmpty) continue;
+
+        if (_isSuggestionPrefix(t)) {
+          final content = _stripPrefix(t, _suggestionPrefix);
+          if (content.isNotEmpty) sugOut.add(content);
+          continue;
+        }
+
+        if (_isChatPrefix(t)) {
+          final n = _normalizeChatLine(t);
+          if (n.isNotEmpty) chatOut.add(n);
+          continue;
+        }
+      }
+
       return {
-        'chat': _cleanChatText(text),
-        'suggestions': _extractSuggestionsLoose(text),
+        'chat': chatOut.join('\n').trim(),
+        'suggestions': sugOut,
       };
     }
 
-    final chatLines = <String>[];
-    final suggestionLines = <String>[];
+    // ---- Caso B: Hay secciones -> parsea por rangos
+    final chatLinesRaw = <String>[];
+    final suggestionLinesRaw = <String>[];
 
     if (chatIndex != -1) {
-      final end = suggestionIndex > chatIndex ? suggestionIndex : lines.length;
+      final end = (suggestionIndex != -1 && suggestionIndex > chatIndex)
+          ? suggestionIndex
+          : lines.length;
       for (var i = chatIndex + 1; i < end; i++) {
-        chatLines.add(lines[i]);
+        chatLinesRaw.add(lines[i]);
       }
     }
 
     if (suggestionIndex != -1) {
       for (var i = suggestionIndex + 1; i < lines.length; i++) {
-        suggestionLines.add(lines[i]);
+        suggestionLinesRaw.add(lines[i]);
       }
     }
 
-    final chatText = _cleanChatText(chatLines.join('\n').trim());
-    final suggestions = <String>[];
-
-    for (final line in suggestionLines) {
-      final s = _extractSuggestionFromLine(line);
-      if (s != null) suggestions.add(s);
+    // ---- CHAT: solo prefijos válidos
+    final chatOut = <String>[];
+    for (final line in chatLinesRaw) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      if (!_isChatPrefix(t)) continue; // <- FILTRO CLAVE
+      final n = _normalizeChatLine(t);
+      if (n.isNotEmpty) chatOut.add(n);
     }
 
-    return {'chat': chatText, 'suggestions': suggestions};
-  }
-
-  List<String> _extractSuggestionsLoose(String raw) {
-    final out = <String>[];
-    for (final line in raw.split('\n')) {
-      final s = _extractSuggestionFromLine(line);
-      if (s != null) out.add(s);
+    // ---- SUGERENCIAS: SOLO "Pregunta sugerida:"
+    final sugOut = <String>[];
+    for (final line in suggestionLinesRaw) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      if (!_isSuggestionPrefix(t)) continue; // <- FILTRO CLAVE
+      final content = _stripPrefix(t, _suggestionPrefix);
+      if (content.isNotEmpty) sugOut.add(content);
     }
-    return out;
+
+    return {
+      'chat': chatOut.join('\n').trim(),
+      'suggestions': sugOut,
+    };
   }
 
   // ============================
   // ✅ PROMPT (Opcion A incluida)
   // ============================
 
- // ✅ E) REEMPLAZA tu _buildChatInstructions por este (obliga 2–4 líneas en CHAT + 3 sugerencias)
-String _buildChatInstructions({String? userPrompt}) {
-  final buffer = StringBuffer();
-  if (_promptOverride.trim().isNotEmpty) {
-    buffer.writeln(_promptOverride.trim());
-    buffer.writeln();
+  // ✅ E) REEMPLAZA tu _buildChatInstructions por este (obliga 2–4 líneas en CHAT + 3 sugerencias)
+  String _buildChatInstructions({String? userPrompt}) {
+    final buffer = StringBuffer();
+
+    if (_promptOverride.trim().isNotEmpty) {
+      buffer.writeln(_promptOverride.trim());
+      buffer.writeln();
+    }
+
+    buffer.writeln(
+        'INSTRUCCION CRITICA: Todo lo que generes DEBE seguir el prompt anterior.');
+    buffer.writeln('Responde en español.');
+    buffer.writeln('Devuelve EXACTAMENTE dos secciones con estos encabezados:');
+    buffer.writeln('CHAT:');
+    buffer.writeln('- Devuelve de 2 a 4 mensajes cortos, UNO POR LINEA.');
+    buffer.writeln(
+        '- Cada linea DEBE iniciar exactamente con uno de estos prefijos:');
+    buffer.writeln('      Respuesta sugerida: ...');
+    buffer.writeln('      Objeción detectada: ...');
+    buffer.writeln('      Momento de cierre: ...');
+    buffer.writeln(
+        '- No uses emojis. No uses JSON. No agregues texto extra fuera de CHAT/SUGERENCIAS.');
+    buffer.writeln('SUGERENCIAS:');
+    buffer.writeln('- Solo preguntas cortas (maximo 3), una por linea.');
+    buffer.writeln('- Cada linea DEBE iniciar con: Pregunta sugerida: ...');
+    buffer.writeln('- No incluyas respuestas ni texto extra.');
+
+    if (userPrompt != null && userPrompt.trim().isNotEmpty) {
+      buffer.writeln();
+      buffer.writeln('Mensaje del usuario:');
+      buffer.writeln(userPrompt.trim());
+    }
+
+    return buffer.toString();
   }
-
-  buffer.writeln('INSTRUCCION CRITICA: Todo lo que generes DEBE seguir el prompt anterior.');
-  buffer.writeln('Responde en espanol.');
-  buffer.writeln('Devuelve EXACTAMENTE dos secciones con estos encabezados:');
-  buffer.writeln('CHAT:');
-  buffer.writeln('- Devuelve de 2 a 4 mensajes cortos, UNO POR LINEA.');
-  buffer.writeln('- Cada linea DEBE iniciar exactamente con uno de estos prefijos:');
-  buffer.writeln('  Pregunta sugerida: ...');
-  buffer.writeln('  Respuesta sugerida: ...');
-  buffer.writeln('  Objecion detectada: ...');
-  buffer.writeln('  Momento de cierre: ...');
-  buffer.writeln('- No uses emojis. No uses JSON. No agregues texto extra fuera de CHAT/SUGERENCIAS.');
-  buffer.writeln('SUGERENCIAS:');
-  buffer.writeln('- Solo preguntas cortas (maximo 3), una por linea.');
-  buffer.writeln('- No incluyas respuestas ni texto extra.');
-
-  if (userPrompt != null && userPrompt.trim().isNotEmpty) {
-    buffer.writeln();
-    buffer.writeln('Mensaje del usuario:');
-    buffer.writeln(userPrompt.trim());
-  }
-
-  return buffer.toString();
-}
-
 
   String _buildSuggestionsText() {
-  final unique = <String>{};
-  for (final suggestion in _suggestions) {
-    final cleaned = suggestion.trim();
-    if (cleaned.isNotEmpty) unique.add(cleaned);
+    final unique = <String>{};
+    for (final suggestion in _suggestions) {
+      final cleaned = suggestion.trim();
+      if (cleaned.isNotEmpty) unique.add(cleaned);
+    }
+
+    if (unique.isEmpty) {
+      return 'Aun no hay sugerencias.\n\n'
+          'Presiona Iniciar y habla (o envia un prompt manual) para que la IA genere sugerencias.';
+    }
+
+    return unique.map((line) => '• $line').join('\n');
   }
-
-  if (unique.isEmpty) {
-    return 'Aun no hay sugerencias.\n\n'
-           'Presiona Iniciar y habla (o envia un prompt manual) para que la IA genere sugerencias.';
-  }
-
-  return unique.map((line) => '• $line').join('\n');
-}
-
 
   String _buildTranscriptText() {
     final parts = <String>[];
+
     for (final transcript in _transcripts) {
-      if (transcript.trim().isNotEmpty) parts.add(transcript.trim());
+      final t = transcript.trim();
+      if (t.isNotEmpty) parts.add('• $t');
     }
+
     final current = _currentTranscript.trim();
-    if (current.isNotEmpty) parts.add(current);
-    return parts.join('\n\n');
+    if (current.isNotEmpty) parts.add('• $current');
+
+    return parts.isEmpty ? '' : parts.join('\n\n');
   }
 
   // ============================
@@ -871,13 +1138,15 @@ String _buildChatInstructions({String? userPrompt}) {
 
     _pendingAudioBytes = 0;
     await _openAIClient?.commitBuffer();
-    await _openAIClient?.requestResponse(instructions: _buildChatInstructions());
+    await _openAIClient?.requestResponse(
+        instructions: _buildChatInstructions());
   }
 
   void _logAudioLevel(Uint8List bytes) {
     if (bytes.length < 2) return;
     final now = DateTime.now();
-    if (_lastLevelLogAt != null && now.difference(_lastLevelLogAt!) < const Duration(seconds: 2)) {
+    if (_lastLevelLogAt != null &&
+        now.difference(_lastLevelLogAt!) < const Duration(seconds: 2)) {
       return;
     }
     _lastLevelLogAt = now;
@@ -903,7 +1172,8 @@ String _buildChatInstructions({String? userPrompt}) {
   Future<void> _setMicMixEnabled(bool enabled) async {
     if (!_windowsMicAvailable && enabled) {
       setState(() {
-        _statusMessage = 'No hay microfono configurado. Define WINDOWS_MIC_DEVICE en .env.';
+        _statusMessage =
+            'No hay microfono configurado. Define WINDOWS_MIC_DEVICE en .env.';
       });
       return;
     }
@@ -938,7 +1208,8 @@ String _buildChatInstructions({String? userPrompt}) {
       final args = <String>[];
 
       String buildInputDevice(String device) {
-        if (windowsAudioBackend == 'wasapi' && device.toLowerCase() == 'default') {
+        if (windowsAudioBackend == 'wasapi' &&
+            device.toLowerCase() == 'default') {
           return 'default';
         }
         return 'audio=$device';
@@ -1080,7 +1351,8 @@ String _buildChatInstructions({String? userPrompt}) {
     final colorScheme = Theme.of(context).colorScheme;
     final textTheme = Theme.of(context).textTheme;
 
-    Widget navIconButton(IconData icon, String tooltip, VoidCallback? onPressed) {
+    Widget navIconButton(
+        IconData icon, String tooltip, VoidCallback? onPressed) {
       return Container(
         width: 40,
         height: 40,
@@ -1134,192 +1406,198 @@ String _buildChatInstructions({String? userPrompt}) {
             ),
             child: Padding(
               padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 6),
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final isCompact = constraints.maxHeight < 275;
-                    return Column(
-                      crossAxisAlignment: CrossAxisAlignment.stretch,
-                      children: [
-                        Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Row(
-                              children: [
-                                navIconButton(
-                                  Icons.play_arrow_rounded,
-                                  'Iniciar',
-                                  _listening ? null : _startListening,
-                                ),
-                                const SizedBox(width: 8),
-                                navIconButton(
-                                  Icons.stop_rounded,
-                                  'Detener',
-                                  _listening ? _stopListening : null,
-                                ),
-                                const SizedBox(width: 8),
-                               navIconButton(
-                                  Icons.settings_rounded,
-                                  'Configurar',
-                                  _openSettings,
-                                ),
-                              ],
-                            ),
-                            Row(
-                              children: [
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  visualDensity: VisualDensity.compact,
-                                  onPressed: () => _requestMainAction('barMinimizeRequested'),
-                                  icon: const Icon(Icons.remove_rounded),
-                                  tooltip: 'Minimizar',
-                                ),
-                                const SizedBox(width: 4),
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  visualDensity: VisualDensity.compact,
-                                  onPressed: () => _requestMainAction('barCloseRequested'),
-                                  icon: const Icon(Icons.close_rounded),
-                                  tooltip: 'Cerrar',
-                                ),
-                              ],
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 4),
-                        const Divider(height: 0),
-                        const SizedBox(height: 2),
-                        Row(
-                          children: [
-                            Text(
-                              _listening
-                                  ? (_micMixEnabled && _windowsMicAvailable
-                                      ? 'Escuchando sistema y microfono'
-                                      : (Platform.isWindows
-                                          ? 'Escuchando audio del sistema'
-                                          : 'Escuchando microfono'))
-                                  : 'Listo para escuchar',
-                              style: textTheme.labelLarge?.copyWith(
-                                fontWeight: FontWeight.w600,
-                              ),
-                            ),
-                            const SizedBox(width: 12),
-                            Text(
-                              _listening
-                                  ? '${_elapsed.inMinutes.toString().padLeft(2, '0')}:${(_elapsed.inSeconds % 60).toString().padLeft(2, '0')}'
-                                  : 'En espera',
-                              style: textTheme.labelMedium?.copyWith(
-                                color: colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ),
-                        const SizedBox(height: 8),
-                        if (!isCompact) ...[
-                              const SizedBox(height: 6),
-                              SizedBox(
-                                height: 30,
-                                child: ListView(
-                                  scrollDirection: Axis.horizontal,
-                                  children: [
-                                    _QuickChip(
-                                      label: _showSuggestions ? 'Volver' : 'Sugerencias',
-                                      icon: Icons.lightbulb_outline_rounded,
-                                      onTap: _toggleSuggestions,
-                                    ),
-                                    _QuickChip(
-                                      label: _showTranscript ? 'Volver' : 'Transcripcion',
-                                      icon: Icons.mic_rounded,
-                                      onTap: _toggleTranscript,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-
-                        const SizedBox(height: 8),
-                        Container(
-                          constraints: const BoxConstraints(minHeight: 34),
-                          decoration: BoxDecoration(
-                            color: colorScheme.surfaceVariant.withOpacity(0.35),
-                            borderRadius: BorderRadius.circular(12),
-                            border: Border.all(
-                              color: colorScheme.outlineVariant.withOpacity(0.5),
-                            ),
-                          ),
-                          padding: const EdgeInsets.symmetric(horizontal: 10),
-                          child: Row(
+              child: LayoutBuilder(
+                builder: (context, constraints) {
+                  final isCompact = constraints.maxHeight < 275;
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Row(
                             children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: _manualPromptController,
-                                  onSubmitted: (_) => _sendManualPrompt(),
-                                  decoration: InputDecoration(
-                                    border: InputBorder.none,
-                                    hintText: 'Ask about your screen or conversation, or',
-                                    hintStyle: textTheme.bodySmall?.copyWith(
-                                      color: colorScheme.onSurfaceVariant,
-                                    ),
-                                    isDense: true,
-                                    contentPadding:
-                                        const EdgeInsets.symmetric(vertical: 10),
-                                  ),
-                                  style: textTheme.bodyMedium,
-                                ),
+                              navIconButton(
+                                Icons.play_arrow_rounded,
+                                'Iniciar',
+                                _listening ? null : _startListening,
                               ),
-                              GestureDetector(
-                                onTap: _sendManualPrompt,
-                                child: Container(
-                                  width: 28,
-                                  height: 28,
-                                  decoration: BoxDecoration(
-                                    color: colorScheme.primary,
-                                    shape: BoxShape.circle,
-                                  ),
-                                  child: const Icon(
-                                    Icons.send_rounded,
-                                    size: 14,
-                                    color: Colors.white,
-                                  ),
-                                ),
+                              const SizedBox(width: 8),
+                              navIconButton(
+                                Icons.stop_rounded,
+                                'Detener',
+                                _listening ? _stopListening : null,
+                              ),
+                              const SizedBox(width: 8),
+                              navIconButton(
+                                Icons.settings_rounded,
+                                'Configurar',
+                                _openSettings,
+                              ),
+                            ],
+                          ),
+                          Row(
+                            children: [
+                              IconButton(
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () =>
+                                    _requestMainAction('barMinimizeRequested'),
+                                icon: const Icon(Icons.remove_rounded),
+                                tooltip: 'Minimizar',
+                              ),
+                              const SizedBox(width: 4),
+                              IconButton(
+                                padding: EdgeInsets.zero,
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () =>
+                                    _requestMainAction('barCloseRequested'),
+                                icon: const Icon(Icons.close_rounded),
+                                tooltip: 'Cerrar',
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      const Divider(height: 0),
+                      const SizedBox(height: 2),
+                      Row(
+                        children: [
+                          Text(
+                            _listening
+                                ? (_micMixEnabled && _windowsMicAvailable
+                                    ? 'Escuchando sistema y microfono'
+                                    : (Platform.isWindows
+                                        ? 'Escuchando audio del sistema'
+                                        : 'Escuchando microfono'))
+                                : 'Listo para escuchar',
+                            style: textTheme.labelLarge?.copyWith(
+                              fontWeight: FontWeight.w600,
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          Text(
+                            _listening
+                                ? '${_elapsed.inMinutes.toString().padLeft(2, '0')}:${(_elapsed.inSeconds % 60).toString().padLeft(2, '0')}'
+                                : 'En espera',
+                            style: textTheme.labelMedium?.copyWith(
+                              color: colorScheme.onSurfaceVariant,
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      if (!isCompact) ...[
+                        const SizedBox(height: 6),
+                        SizedBox(
+                          height: 30,
+                          child: ListView(
+                            scrollDirection: Axis.horizontal,
+                            children: [
+                              _QuickChip(
+                                label:
+                                    _showSuggestions ? 'Volver' : 'Sugerencias',
+                                icon: Icons.lightbulb_outline_rounded,
+                                onTap: _toggleSuggestions,
+                              ),
+                              _QuickChip(
+                                label: _showTranscript
+                                    ? 'Volver'
+                                    : 'Transcripcion',
+                                icon: Icons.mic_rounded,
+                                onTap: _toggleTranscript,
                               ),
                             ],
                           ),
                         ),
-                        const SizedBox(height: 10),
-                        Divider(
-                          height: 1,
-                          color: colorScheme.outlineVariant.withOpacity(0.25),
-                        ),
-                        const SizedBox(height: 6),
-                        Expanded(
-                            child: _showTranscript
-                                ? _TranscriptionPane(
-                                    controller: _transcriptScrollController,
-                                    text: (_transcripts.isNotEmpty || _currentTranscript.isNotEmpty)
-                                        ? _buildTranscriptText()
-                                        : 'Esperando audio para transcribir',
-                                  )
-                                : _showSuggestions
-                                    ? _TranscriptionPane(
-                                        controller: _suggestionScrollController,
-                                        text: _buildSuggestionsText(),
-                                      )
-                                    : _ChatPane(
-                                        controller: _chatScrollController,
-                                        messages: _chatResponses,
-                                        emptyText: _statusMessage,
-                                        isThinking: _responseInFlight,
-                                      ),
-                          ),
                       ],
-                    );
-                  },
-                ),
+                      const SizedBox(height: 8),
+                      Container(
+                        constraints: const BoxConstraints(minHeight: 34),
+                        decoration: BoxDecoration(
+                          color: colorScheme.surfaceVariant.withOpacity(0.35),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(
+                            color: colorScheme.outlineVariant.withOpacity(0.5),
+                          ),
+                        ),
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        child: Row(
+                          children: [
+                            Expanded(
+                              child: TextField(
+                                controller: _manualPromptController,
+                                onSubmitted: (_) => _sendManualPrompt(),
+                                decoration: InputDecoration(
+                                  border: InputBorder.none,
+                                  hintText:
+                                      'Ask about your screen or conversation, or',
+                                  hintStyle: textTheme.bodySmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                  ),
+                                  isDense: true,
+                                  contentPadding:
+                                      const EdgeInsets.symmetric(vertical: 10),
+                                ),
+                                style: textTheme.bodyMedium,
+                              ),
+                            ),
+                            GestureDetector(
+                              onTap: _sendManualPrompt,
+                              child: Container(
+                                width: 28,
+                                height: 28,
+                                decoration: BoxDecoration(
+                                  color: colorScheme.primary,
+                                  shape: BoxShape.circle,
+                                ),
+                                child: const Icon(
+                                  Icons.send_rounded,
+                                  size: 14,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Divider(
+                        height: 1,
+                        color: colorScheme.outlineVariant.withOpacity(0.25),
+                      ),
+                      const SizedBox(height: 6),
+                      Expanded(
+                        child: _showTranscript
+                            ? _TranscriptionPane(
+                                controller: _transcriptScrollController,
+                                text: (_transcripts.isNotEmpty ||
+                                        _currentTranscript.isNotEmpty)
+                                    ? _buildTranscriptText()
+                                    : 'Esperando audio para transcribir',
+                              )
+                            : _showSuggestions
+                                ? _TranscriptionPane(
+                                    controller: _suggestionScrollController,
+                                    text: _buildSuggestionsText(),
+                                  )
+                                : _ChatPane(
+                                    controller: _chatScrollController,
+                                    messages: _chatResponses,
+                                    emptyText: _statusMessage,
+                                    isThinking: _responseInFlight,
+                                  ),
+                      ),
+                    ],
+                  );
+                },
               ),
             ),
           ),
         ),
-      );
+      ),
+    );
   }
 }
 
@@ -1441,8 +1719,9 @@ class _ChatPane extends StatelessWidget {
         final isThinkingRow = isThinking && index == itemCount - 1;
 
         final role = isThinkingRow ? 'assistant' : messages[index].role;
-        final text =
-            isThinkingRow ? 'Asistente está pensando...' : messages[index].text.trim();
+        final text = isThinkingRow
+            ? 'Asistente está pensando...'
+            : messages[index].text.trim();
 
         final isAssistant = role == 'assistant';
 
