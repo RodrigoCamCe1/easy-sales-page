@@ -86,6 +86,7 @@ class _RecordingBarState extends State<RecordingBar> {
   String _promptOverride = '';
   bool _micMixEnabled = false;
   bool _showSuggestions = false;
+  bool _suggestionsSidebarOpen = true;
   DateTime? _sessionStartedAt;
   DateTime? _sessionEndedAt;
   bool _conversationSaved = false;
@@ -127,8 +128,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
   void _toggleSuggestions() {
     setState(() {
-      _showSuggestions = !_showSuggestions;
-      if (_showSuggestions) _showTranscript = false;
+      _suggestionsSidebarOpen = !_suggestionsSidebarOpen;
     });
   }
 
@@ -659,6 +659,17 @@ class _RecordingBarState extends State<RecordingBar> {
       startedAt: startedAt,
       endedAt: endedAt,
       durationSeconds: duration,
+      messages: _chatResponses
+          .map(
+            (m) => ConversationMessage(
+              role: m.role,
+              text: m.text,
+              at: m.at,
+            ),
+          )
+          .toList(),
+      suggestions: List<String>.from(_suggestions),
+      transcripts: List<String>.from(_transcripts),
     );
 
     await ConversationStore.instance.add(conversation);
@@ -689,6 +700,13 @@ class _RecordingBarState extends State<RecordingBar> {
 
   String _normalizeChatLine(String line) {
     var t = line.trim();
+    if (t.isEmpty) return '';
+
+    // Si viene cola pegada de sugerencias, cortarla para no contaminar CHAT.
+    t = t.replaceAll(
+      RegExp(r'\s*SUGERENCIAS\s*:.*$', caseSensitive: false),
+      '',
+    ).trim();
     if (t.isEmpty) return '';
 
     // Solo permitimos líneas que empiecen con prefijos de CHAT
@@ -937,8 +955,38 @@ class _RecordingBarState extends State<RecordingBar> {
     return kept.join('\n').trim();
   }
 
+  String _forceSectionNewlines(String t) {
+    t = t.replaceAllMapped(
+      RegExp(r'(\S)\s*(CHAT\s*:)', caseSensitive: false),
+      (m) => '${m.group(1)}\n${m.group(2)}',
+    );
+    t = t.replaceAllMapped(
+      RegExp(r'(\S)\s*(SUGERENCIAS\s*:)', caseSensitive: false),
+      (m) => '${m.group(1)}\n${m.group(2)}',
+    );
+
+    t = t.replaceAllMapped(
+      RegExp(
+        r'(SUGERENCIAS\s*:)\s*(Pregunta sugerida:)',
+        caseSensitive: false,
+      ),
+      (m) => '${m.group(1)}\n${m.group(2)}',
+    );
+
+    t = t.replaceAllMapped(
+      RegExp(
+        r'(CHAT\s*:)\s*(Respuesta sugerida:|Objeción detectada:|Objecion detectada:|Momento de cierre:)',
+        caseSensitive: false,
+      ),
+      (m) => '${m.group(1)}\n${m.group(2)}',
+    );
+
+    return t;
+  }
+
   Map<String, dynamic> _parseAssistantOutput(String raw) {
-    final text = _extractResponseText(raw).trim();
+    var text = _extractResponseText(raw).trim();
+    text = _forceSectionNewlines(text);
     if (text.isEmpty) {
       return {'chat': '', 'suggestions': <String>[]};
     }
@@ -1496,8 +1544,9 @@ class _RecordingBarState extends State<RecordingBar> {
                             scrollDirection: Axis.horizontal,
                             children: [
                               _QuickChip(
-                                label:
-                                    _showSuggestions ? 'Volver' : 'Sugerencias',
+                                label: _suggestionsSidebarOpen
+                                    ? 'Ocultar sugerencias'
+                                    : 'Mostrar sugerencias',
                                 icon: Icons.lightbulb_outline_rounded,
                                 onTap: _toggleSuggestions,
                               ),
@@ -1569,25 +1618,38 @@ class _RecordingBarState extends State<RecordingBar> {
                       ),
                       const SizedBox(height: 6),
                       Expanded(
-                        child: _showTranscript
-                            ? _TranscriptionPane(
-                                controller: _transcriptScrollController,
-                                text: (_transcripts.isNotEmpty ||
-                                        _currentTranscript.isNotEmpty)
-                                    ? _buildTranscriptText()
-                                    : 'Esperando audio para transcribir',
-                              )
-                            : _showSuggestions
-                                ? _TranscriptionPane(
-                                    controller: _suggestionScrollController,
-                                    text: _buildSuggestionsText(),
-                                  )
-                                : _ChatPane(
-                                    controller: _chatScrollController,
-                                    messages: _chatResponses,
-                                    emptyText: _statusMessage,
-                                    isThinking: _responseInFlight,
-                                  ),
+                        child: Row(
+                          children: [
+                            AnimatedContainer(
+                              duration: const Duration(milliseconds: 180),
+                              curve: Curves.easeOut,
+                              width: _suggestionsSidebarOpen ? 330 : 0,
+                              child: _suggestionsSidebarOpen
+                                  ? _SuggestionsSidebar(
+                                      controller: _suggestionScrollController,
+                                      suggestions: _suggestions,
+                                      onClose: _toggleSuggestions,
+                                    )
+                                  : const SizedBox.shrink(),
+                            ),
+                            Expanded(
+                              child: _showTranscript
+                                  ? _TranscriptionPane(
+                                      controller: _transcriptScrollController,
+                                      text: (_transcripts.isNotEmpty ||
+                                              _currentTranscript.isNotEmpty)
+                                          ? _buildTranscriptText()
+                                          : 'Esperando audio para transcribir',
+                                    )
+                                  : _ChatPane(
+                                      controller: _chatScrollController,
+                                      messages: _chatResponses,
+                                      emptyText: _statusMessage,
+                                      isThinking: _responseInFlight,
+                                    ),
+                            ),
+                          ],
+                        ),
                       ),
                     ],
                   );
@@ -1669,6 +1731,138 @@ class _TranscriptionPane extends StatelessWidget {
               ),
         ),
       ),
+    );
+  }
+}
+
+class _SuggestionsSidebar extends StatelessWidget {
+  const _SuggestionsSidebar({
+    required this.controller,
+    required this.suggestions,
+    required this.onClose,
+  });
+
+  final ScrollController controller;
+  final List<String> suggestions;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    final textTheme = Theme.of(context).textTheme;
+
+    return Container(
+      margin: const EdgeInsets.only(right: 10),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+      decoration: BoxDecoration(
+        color: colorScheme.surfaceVariant.withOpacity(0.25),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: colorScheme.outlineVariant.withOpacity(0.35),
+        ),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(
+                Icons.lightbulb_outline_rounded,
+                size: 18,
+                color: colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  'Sugerencias',
+                  style: textTheme.labelLarge?.copyWith(
+                    fontWeight: FontWeight.w700,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'Cerrar sugerencias',
+                visualDensity: VisualDensity.compact,
+                padding: EdgeInsets.zero,
+                onPressed: onClose,
+                icon: const Icon(Icons.close_rounded, size: 18),
+              ),
+            ],
+          ),
+          const SizedBox(height: 6),
+          Divider(
+            height: 1,
+            color: colorScheme.outlineVariant.withOpacity(0.25),
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: _SuggestionsListPane(
+              controller: controller,
+              suggestions: suggestions,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _SuggestionsListPane extends StatelessWidget {
+  const _SuggestionsListPane({
+    required this.controller,
+    required this.suggestions,
+  });
+
+  final ScrollController controller;
+  final List<String> suggestions;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+
+    if (suggestions.isEmpty) {
+      return SingleChildScrollView(
+        controller: controller,
+        physics: const ClampingScrollPhysics(),
+        child: Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            'Aún no hay sugerencias.\nHabla o envía un prompt manual para generar preguntas.',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurface,
+                ),
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      controller: controller,
+      physics: const ClampingScrollPhysics(),
+      padding: const EdgeInsets.only(top: 2, bottom: 10),
+      itemCount: suggestions.length,
+      itemBuilder: (context, index) {
+        final s = suggestions[index].trim();
+        if (s.isEmpty) return const SizedBox.shrink();
+
+        return Container(
+          margin: const EdgeInsets.only(bottom: 8),
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 10),
+          decoration: BoxDecoration(
+            color: colorScheme.surface.withOpacity(0.18),
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(
+              color: colorScheme.outlineVariant.withOpacity(0.25),
+            ),
+          ),
+          child: Text(
+            '• $s',
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurface,
+                ),
+          ),
+        );
+      },
     );
   }
 }

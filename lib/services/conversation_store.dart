@@ -24,8 +24,8 @@ class ConversationStore {
     final decoded = jsonDecode(raw);
     if (decoded is! List) return [];
     return decoded
-        .whereType<Map<String, dynamic>>()
-        .map(Conversation.fromJson)
+        .whereType<Map>()
+        .map((item) => Conversation.fromJson(Map<String, dynamic>.from(item)))
         .toList();
   }
 

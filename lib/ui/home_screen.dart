@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../core/app_config.dart';
 import '../models/conversation.dart';
+import '../pages/conversation_detail_page.dart';
 import '../services/conversation_store.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -283,7 +284,21 @@ class _HomeScreenState extends State<HomeScreen> {
                       else
                         Column(
                           children: _conversations
-                              .map((item) => _ConversationTile(item: item))
+                              .map(
+                                (item) => _ConversationTile(
+                                  item: item,
+                                  onTap: () {
+                                    Navigator.push(
+                                      context,
+                                      MaterialPageRoute(
+                                        builder: (_) => ConversationDetailPage(
+                                          conversation: item,
+                                        ),
+                                      ),
+                                    );
+                                  },
+                                ),
+                              )
                               .toList(),
                         ),
                     ],
@@ -476,9 +491,10 @@ class _SmallCard extends StatelessWidget {
 }
 
 class _ConversationTile extends StatelessWidget {
-  const _ConversationTile({required this.item});
+  const _ConversationTile({required this.item, this.onTap});
 
   final Conversation item;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -488,47 +504,51 @@ class _ConversationTile extends StatelessWidget {
         '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
     final durationLabel =
         '${duration.inMinutes.toString().padLeft(2, '0')}:${(duration.inSeconds % 60).toString().padLeft(2, '0')}';
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.05),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: Colors.white.withOpacity(0.08)),
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  item.title,
-                  style: const TextStyle(
-                    color: Colors.white,
-                    fontWeight: FontWeight.w600,
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(16),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.05),
+          borderRadius: BorderRadius.circular(16),
+          border: Border.all(color: Colors.white.withOpacity(0.08)),
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    item.title,
+                    style: const TextStyle(
+                      color: Colors.white,
+                      fontWeight: FontWeight.w600,
+                    ),
                   ),
-                ),
+                  const SizedBox(height: 6),
+                  Text(
+                    item.preview,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(color: Colors.white70),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                _Tag(label: durationLabel),
                 const SizedBox(height: 6),
-                Text(
-                  item.preview,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white70),
-                ),
+                Text(timeLabel, style: const TextStyle(color: Colors.white60)),
               ],
             ),
-          ),
-          const SizedBox(width: 12),
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
-            children: [
-              _Tag(label: durationLabel),
-              const SizedBox(height: 6),
-              Text(timeLabel, style: const TextStyle(color: Colors.white60)),
-            ],
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }
