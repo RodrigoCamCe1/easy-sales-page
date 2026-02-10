@@ -1,4 +1,4 @@
-import 'dart:async';
+﻿import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -53,6 +53,7 @@ class _RecordingBarState extends State<RecordingBar> {
   Duration _elapsed = Duration.zero;
   Timer? _timer;
   Timer? _realtimeTimer;
+  Timer? _uiTranscriptIdleTimer;
 
   final ScrollController _chatScrollController = ScrollController();
   final ScrollController _suggestionScrollController = ScrollController();
@@ -70,7 +71,12 @@ class _RecordingBarState extends State<RecordingBar> {
 
   // ✅ Transcripción separada (no debe contaminar Chat/Sugerencias)
   final List<String> _transcripts = [];
-  String _currentTranscript = '';
+  // buffers separados para que no se mezclen
+  String _currentTranscriptSys = '';
+  String _currentTranscriptMic = '';
+  // para dedupe por fuente
+  String? _lastSysLine;
+  String? _lastMicLine;
 
   String _statusMessage = '';
   Process? _audioProcess;
@@ -189,6 +195,7 @@ class _RecordingBarState extends State<RecordingBar> {
   Future<void> _startListening() async {
     if (_listening) return;
     await _loadPromptFromFile();
+
     if (openAIKey.isEmpty) {
       setState(() {
         _statusMessage =
@@ -196,6 +203,10 @@ class _RecordingBarState extends State<RecordingBar> {
       });
       return;
     }
+
+    // ✅ limpia timers UI transcript
+    _uiTranscriptIdleTimer?.cancel();
+    _uiTranscriptIdleTimer = null;
 
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -216,7 +227,10 @@ class _RecordingBarState extends State<RecordingBar> {
     _suggestions.clear();
     _currentResponse = '';
     _transcripts.clear();
-    _currentTranscript = '';
+    _currentTranscriptSys = '';
+    _currentTranscriptMic = '';
+    _lastSysLine = null;
+    _lastMicLine = null;
 
     _statusMessage = 'Conectando con OpenAI';
 
@@ -232,8 +246,14 @@ class _RecordingBarState extends State<RecordingBar> {
       vadSilenceMs: vadSilenceMs,
       sessionInstructions: _promptOverride,
       onDelta: _appendResponseDelta,
-      onTranscriptDelta: _appendTranscriptDelta,
-      onComplete: _handleResponseComplete,
+      onTranscriptDelta: (t) {
+        _appendTranscriptDelta(t, source: 'sys');
+      },
+      onComplete: () {
+        _appendTranscriptDelta('\n', source: 'sys');
+        _appendTranscriptDelta('\n', source: 'mic');
+        _handleResponseComplete();
+      },
       showEvents: showOpenAIEvents,
     );
 
@@ -314,8 +334,14 @@ class _RecordingBarState extends State<RecordingBar> {
         vadSilenceMs: vadSilenceMs,
         sessionInstructions: _promptOverride,
         onDelta: _appendResponseDelta,
-        onTranscriptDelta: _appendTranscriptDelta,
-        onComplete: _handleResponseComplete,
+        onTranscriptDelta: (t) {
+          _appendTranscriptDelta(t, source: 'sys');
+        },
+        onComplete: () {
+          _appendTranscriptDelta('\n', source: 'sys');
+          _appendTranscriptDelta('\n', source: 'mic');
+          _handleResponseComplete();
+        },
         showEvents: showOpenAIEvents,
       );
       await _openAIClient?.connect();
@@ -331,6 +357,10 @@ class _RecordingBarState extends State<RecordingBar> {
     });
 
     _manualPromptController.clear();
+
+    // ✅ por si venía una transcripción abierta, cerramos líneas antes de responder
+    _appendTranscriptDelta('\n', source: 'sys');
+    _appendTranscriptDelta('\n', source: 'mic');
 
     await _openAIClient?.requestResponse(
       instructions: _buildChatInstructions(userPrompt: prompt),
@@ -401,92 +431,166 @@ class _RecordingBarState extends State<RecordingBar> {
   // ============================
 
   void _appendResponseDelta(String delta) {
-  if (delta.isEmpty) return;
-
-  setState(() {
-    _currentResponse += delta;
-    _statusMessage = 'Respuesta en pantalla';
-
-    // Crea burbuja "en vivo"
-    if (!_assistantStreamStarted) {
-      _assistantStreamStarted = true;
-      _chatResponses.add(_ChatMessage(role: 'assistant', text: ''));
-      _streamingAssistantIndex = _chatResponses.length - 1;
-    }
-
-    // ✅ Pintar SOLO chat válido (no preguntas sugeridas)
-    _streamingAssistantText = _buildStreamingChatPreview(_currentResponse);
-
-    final idx = _streamingAssistantIndex;
-    if (idx != null && idx >= 0 && idx < _chatResponses.length) {
-      // Si todavía no hay nada “chat válido”, no muestres basura
-      final visible = _streamingAssistantText.trim();
-      _chatResponses[idx] =
-          _ChatMessage(role: 'assistant', text: visible.isEmpty ? '...' : visible);
-    }
-  });
-
-  _scrollToBottom(_chatScrollController);
-}
-
-
-  String _buildStreamingChatPreview(String raw) {
-  if (raw.trim().isEmpty) return '';
-
-  final text = _extractResponseText(raw);
-
-  // 1) Normaliza saltos de línea y corta por líneas
-  final lines = text.split('\n');
-
-  // 2) Quedate solo con líneas que sean “CHAT prefix”
-  final kept = <String>[];
-  for (final line in lines) {
-    final t = line.trim();
-    if (t.isEmpty) continue;
-
-    // Nunca mostrar preguntas sugeridas en el chat en vivo
-    if (t.toLowerCase().startsWith(_suggestionPrefix.toLowerCase())) continue;
-
-    final n = _normalizeChatLine(t); // devuelve '' si no es prefijo válido
-    if (n.isNotEmpty) kept.add(n);
-  }
-
-  // 3) Dedup simple manteniendo orden
-  final seen = <String>{};
-  final out = <String>[];
-  for (final l in kept) {
-    if (seen.add(l)) out.add(l);
-  }
-
-  // 4) Mostramos máximo 4 líneas (tu regla)
-  if (out.length > 4) {
-    return out.take(4).join('\n');
-  }
-  return out.join('\n');
-}
-
-
-  void _appendTranscriptDelta(String text) {
-    if (text.isEmpty) return;
+    if (delta.isEmpty) return;
 
     setState(() {
-      _currentTranscript += text;
+      _currentResponse += delta;
+      _statusMessage = 'Respuesta en pantalla';
 
-      // cortamos por saltos de línea (cuando el engine los mande)
-      while (_currentTranscript.contains('\n')) {
-        final idx = _currentTranscript.indexOf('\n');
-        final chunk = _currentTranscript.substring(0, idx).trim();
+      // Crea burbuja "en vivo"
+      if (!_assistantStreamStarted) {
+        _assistantStreamStarted = true;
+        _chatResponses.add(_ChatMessage(role: 'assistant', text: ''));
+        _streamingAssistantIndex = _chatResponses.length - 1;
+      }
 
-        final cleaned = _cleanTranscriptChunk(chunk);
-        if (cleaned != null) {
-          if (_transcripts.isEmpty || _transcripts.last != cleaned) {
-            _transcripts.add(cleaned);
-          }
-        }
+      // ✅ Pintar SOLO chat válido (no preguntas sugeridas)
+      _streamingAssistantText = _buildStreamingChatPreview(_currentResponse);
 
-        _currentTranscript = _currentTranscript.substring(idx + 1);
+      final idx = _streamingAssistantIndex;
+      if (idx != null && idx >= 0 && idx < _chatResponses.length) {
+        // Si todavía no hay nada “chat válido”, no muestres basura
+        final visible = _streamingAssistantText.trim();
+        _chatResponses[idx] = _ChatMessage(
+            role: 'assistant', text: visible.isEmpty ? '...' : visible);
       }
     });
+
+    _scrollToBottom(_chatScrollController);
+  }
+
+  String _buildStreamingChatPreview(String raw) {
+    if (raw.trim().isEmpty) return '';
+
+    final text = _extractResponseText(raw);
+
+    // 1) Normaliza saltos de línea y corta por líneas
+    final lines = text.split('\n');
+
+    // 2) Quedate solo con líneas que sean “CHAT prefix”
+    final kept = <String>[];
+    for (final line in lines) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+
+      // Nunca mostrar preguntas sugeridas en el chat en vivo
+      if (t.toLowerCase().startsWith(_suggestionPrefix.toLowerCase())) continue;
+
+      final n = _normalizeChatLine(t); // devuelve '' si no es prefijo válido
+      if (n.isNotEmpty) kept.add(n);
+    }
+
+    // 3) Dedup simple manteniendo orden
+    final seen = <String>{};
+    final out = <String>[];
+    for (final l in kept) {
+      if (seen.add(l)) out.add(l);
+    }
+
+    // 4) Mostramos máximo 4 líneas (tu regla)
+    if (out.length > 4) {
+      return out.take(4).join('\n');
+    }
+    return out.join('\n');
+  }
+
+  /// ✅ Llama con text normal.
+  /// Opcional: source = 'sys' o 'mic'
+  void _appendTranscriptDelta(String text, {String source = 'sys'}) {
+    if (text.isEmpty) return;
+
+    // normaliza source
+    source = source.toLowerCase().trim();
+    if (source != 'mic') source = 'sys';
+
+    // Si llega un "\n" explícito, solo cerramos la línea de la fuente correspondiente
+    void flushOneLine({required bool isMic}) {
+      final buf = isMic ? _currentTranscriptMic : _currentTranscriptSys;
+      final chunk = buf.trim();
+      if (chunk.isEmpty) return;
+
+      final cleaned = _cleanTranscriptChunk(chunk);
+      if (cleaned != null && cleaned.trim().isNotEmpty) {
+        final tagged = isMic ? '🎤 $cleaned' : '🖥️ $cleaned';
+
+        // dedupe por fuente
+        if (isMic) {
+          if (_lastMicLine != tagged) {
+            _transcripts.add(tagged);
+            _lastMicLine = tagged;
+          }
+        } else {
+          if (_lastSysLine != tagged) {
+            _transcripts.add(tagged);
+            _lastSysLine = tagged;
+          }
+        }
+      }
+
+      if (isMic) {
+        _currentTranscriptMic = '';
+      } else {
+        _currentTranscriptSys = '';
+      }
+    }
+
+    // ⏱️ Idle flush: si no llegan más deltas, cerramos línea automáticamente
+    void bumpIdleFlush({required bool isMic, int ms = 1100}) {
+      _uiTranscriptIdleTimer?.cancel();
+      _uiTranscriptIdleTimer = Timer(Duration(milliseconds: ms), () {
+        setState(() {
+          flushOneLine(isMic: isMic);
+        });
+        _scrollToBottom(_transcriptScrollController);
+      });
+    }
+
+    final isMic = source == 'mic';
+
+    setState(() {
+      // 1) Agrega texto al buffer correcto
+      if (text == '\n') {
+        flushOneLine(isMic: isMic);
+      } else {
+        if (isMic) {
+          _currentTranscriptMic += text;
+        } else {
+          _currentTranscriptSys += text;
+        }
+      }
+
+      // 2) Si el backend manda "\n" dentro del texto, partimos por líneas
+      String working = isMic ? _currentTranscriptMic : _currentTranscriptSys;
+
+      while (working.contains('\n')) {
+        final idx = working.indexOf('\n');
+        final line = working.substring(0, idx);
+
+        // set temporal para que flush use ese contenido
+        if (isMic) {
+          _currentTranscriptMic = line;
+        } else {
+          _currentTranscriptSys = line;
+        }
+
+        flushOneLine(isMic: isMic);
+
+        // continúa con el resto
+        working = working.substring(idx + 1);
+      }
+
+      // guarda el residual que quedó sin \n
+      if (isMic) {
+        _currentTranscriptMic = working;
+      } else {
+        _currentTranscriptSys = working;
+      }
+    });
+
+    // 3) Si no fue "\n", programamos cierre automático por silencio de transcript
+    if (text != '\n') {
+      bumpIdleFlush(isMic: isMic);
+    }
 
     _scrollToBottom(_transcriptScrollController);
   }
@@ -602,16 +706,8 @@ class _RecordingBarState extends State<RecordingBar> {
     _currentResponse = '';
 
     // ====== TRANSCRIPT final ======
-    final transcript = _currentTranscript.trim();
-    final cleanedFinal = _cleanTranscriptChunk(transcript);
-    if (cleanedFinal != null) {
-      setState(() {
-        if (_transcripts.isEmpty || _transcripts.last != cleanedFinal) {
-          _transcripts.add(cleanedFinal);
-        }
-      });
-    }
-    _currentTranscript = '';
+    _appendTranscriptDelta('\n', source: 'sys');
+    _appendTranscriptDelta('\n', source: 'mic');
 
     _scrollToBottom(_chatScrollController);
     _scrollToBottom(_suggestionScrollController);
@@ -703,10 +799,12 @@ class _RecordingBarState extends State<RecordingBar> {
     if (t.isEmpty) return '';
 
     // Si viene cola pegada de sugerencias, cortarla para no contaminar CHAT.
-    t = t.replaceAll(
-      RegExp(r'\s*SUGERENCIAS\s*:.*$', caseSensitive: false),
-      '',
-    ).trim();
+    t = t
+        .replaceAll(
+          RegExp(r'\s*SUGERENCIAS\s*:.*$', caseSensitive: false),
+          '',
+        )
+        .trim();
     if (t.isEmpty) return '';
 
     // Solo permitimos líneas que empiecen con prefijos de CHAT
@@ -1162,8 +1260,11 @@ class _RecordingBarState extends State<RecordingBar> {
       if (t.isNotEmpty) parts.add('• $t');
     }
 
-    final current = _currentTranscript.trim();
-    if (current.isNotEmpty) parts.add('• $current');
+    final currentSys = _currentTranscriptSys.trim();
+    if (currentSys.isNotEmpty) parts.add('• 🖥️ $currentSys');
+
+    final currentMic = _currentTranscriptMic.trim();
+    if (currentMic.isNotEmpty) parts.add('• 🎤 $currentMic');
 
     return parts.isEmpty ? '' : parts.join('\n\n');
   }
@@ -1179,16 +1280,17 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   Future<void> _flushRealtimeResponse() async {
-    if (!_listening || _openAIClient == null) return;
-    if (_responseInFlight || _pendingAudioBytes == 0) return;
+  const minCommitBytes = 9600;
+  if (!_listening || _openAIClient == null) return;
+  if (_responseInFlight) return;
+  if (_pendingAudioBytes < minCommitBytes) return;
 
-    setState(() => _responseInFlight = true);
+  setState(() => _responseInFlight = true);
+  _pendingAudioBytes = 0;
 
-    _pendingAudioBytes = 0;
-    await _openAIClient?.commitBuffer();
-    await _openAIClient?.requestResponse(
-        instructions: _buildChatInstructions());
-  }
+  await _openAIClient!.commitBuffer();
+  await _openAIClient!.requestResponse(instructions: _buildChatInstructions());
+}
 
   void _logAudioLevel(Uint8List bytes) {
     if (bytes.length < 2) return;
@@ -1378,6 +1480,7 @@ class _RecordingBarState extends State<RecordingBar> {
     _requestMainAction('barClosed');
     _timer?.cancel();
     _realtimeTimer?.cancel();
+    _uiTranscriptIdleTimer?.cancel();
     _chatScrollController.dispose();
     _suggestionScrollController.dispose();
     _transcriptScrollController.dispose();
@@ -1637,7 +1740,8 @@ class _RecordingBarState extends State<RecordingBar> {
                                   ? _TranscriptionPane(
                                       controller: _transcriptScrollController,
                                       text: (_transcripts.isNotEmpty ||
-                                              _currentTranscript.isNotEmpty)
+                                              _currentTranscriptSys.isNotEmpty ||
+                                              _currentTranscriptMic.isNotEmpty)
                                           ? _buildTranscriptText()
                                           : 'Esperando audio para transcribir',
                                     )

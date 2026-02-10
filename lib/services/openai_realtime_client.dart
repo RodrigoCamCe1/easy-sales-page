@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:io';
@@ -37,6 +38,37 @@ class OpenAIRealtimeClient {
   bool _completedThisTurn = false;
   String? _assistantStreamMode;
   String? _activeResponseId;
+  // ==== TRANSCRIPTS: evitar overlaps (delta vs completed) ====
+  final Map<String, String> _userTranscriptAccum = {};
+
+  // =========================
+  // TRANSCRIPT: flush por inactividad
+  // =========================
+  Timer? _transcriptIdleTimer;
+  bool _hasOpenTranscript = false; // hay texto “en progreso” que aún no cerró con \n
+  final int _transcriptIdleMs = 1100; // 900–1500 recomendado
+
+  void _bumpTranscriptIdleFlush() {
+    _hasOpenTranscript = true;
+
+    _transcriptIdleTimer?.cancel();
+    _transcriptIdleTimer = Timer(Duration(milliseconds: _transcriptIdleMs), () {
+      if (_hasOpenTranscript) {
+        onTranscriptDelta('\n'); // cierra “la línea” en la UI
+        _hasOpenTranscript = false;
+      }
+    });
+  }
+
+  void _forceCloseTranscriptLine() {
+    _transcriptIdleTimer?.cancel();
+    _transcriptIdleTimer = null;
+
+    if (_hasOpenTranscript) {
+      onTranscriptDelta('\n');
+      _hasOpenTranscript = false;
+    }
+  }
 
   Future<void> connect() async {
     final uri = Uri.parse('wss://api.openai.com/v1/realtime?model=$model');
@@ -57,7 +89,6 @@ class OpenAIRealtimeClient {
       _handleMessage,
       onDone: () {
         debugPrint('OpenAI WS closed');
-        // Si se cerró sin complete, mejor cerrar la UI de forma segura
         _safeCompleteOnce(reason: 'ws_onDone');
       },
       onError: (error) {
@@ -115,24 +146,25 @@ class OpenAIRealtimeClient {
     _completedThisTurn = false; // nuevo turno/respuesta
     _assistantStreamMode = null;
     _activeResponseId = null;
-    
+    _userTranscriptAccum.clear();
+
+    // Opcional: si hay transcript en progreso, cerralo antes de pedir respuesta
+    _forceCloseTranscriptLine();
 
     _channel?.sink.add(jsonEncode({
       'type': 'response.create',
       'response': {
         'modalities': ['text'],
-        // refuerzo por si la sesión no aplicó
-        'input_audio_transcription': {
-          'model': 'gpt-4o-mini-transcribe',
-          'language': 'es',
-          'prompt': 'Transcribe únicamente en español (es).',
-        },
         'instructions': instructions,
       },
     }));
   }
 
   Future<void> close() async {
+    _transcriptIdleTimer?.cancel();
+    _transcriptIdleTimer = null;
+    _userTranscriptAccum.clear();
+
     await _channel?.sink.close();
     _channel = null;
   }
@@ -157,7 +189,6 @@ class OpenAIRealtimeClient {
     // =========================
     // 0) ERRORES GLOBALES
     // =========================
-    // A veces llega {"type":"error", "error": {...}}
     if (type == 'error') {
       final msg = _extractErrorMessage(payload);
       debugPrint('OpenAI ERROR: $msg');
@@ -168,121 +199,129 @@ class OpenAIRealtimeClient {
     // =========================
     // 1) TRANSCRIPCIÓN (USUARIO)
     // =========================
-    // Realtime típico:
-    // conversation.item.input_audio_transcription.delta/completed
-    // input_audio_transcription.delta/completed
-    if (type == 'conversation.item.input_audio_transcription.delta' ) {
+    if (type == 'conversation.item.input_audio_transcription.delta') {
+      final itemId = _getTranscriptItemId(payload);
       final t = _extractTranscriptFromTranscriptionEvent(payload);
-      if (t.isNotEmpty) onTranscriptDelta(t);
+      if (t.isEmpty) return;
+
+      final prev = _userTranscriptAccum[itemId] ?? '';
+      _userTranscriptAccum[itemId] = prev + t;
+
+      // preview en vivo: SOLO delta
+      onTranscriptDelta(t);
+      _bumpTranscriptIdleFlush();
       return;
     }
 
     if (type == 'conversation.item.input_audio_transcription.completed') {
-      final t = _extractTranscriptFromTranscriptionEvent(payload);
-      if (t.isNotEmpty) onTranscriptDelta('$t\n');
+      final itemId = _getTranscriptItemId(payload);
+      final finalText = _extractTranscriptFromTranscriptionEvent(payload).trim();
+      if (finalText.isEmpty) return;
+
+      final prev = _userTranscriptAccum[itemId] ?? '';
+      final diff = _diffTranscript(prev, finalText);
+
+      // manda SOLO lo faltante + salto de línea
+      if (diff.isNotEmpty) onTranscriptDelta(diff);
+      onTranscriptDelta('\n');
+
+      _transcriptIdleTimer?.cancel();
+      _transcriptIdleTimer = null;
+      _hasOpenTranscript = false;
+      _userTranscriptAccum.remove(itemId);
       return;
     }
 
     // Algunas variantes (depende del modelo / backend)
     if (type.startsWith('speech_transcript')) {
       final t = _extractAnyText(payload).trim();
-      if (t.isNotEmpty) onTranscriptDelta(t);
+      if (t.isNotEmpty) {
+        onTranscriptDelta(t);
+        _bumpTranscriptIdleFlush();
+      }
       return;
     }
-      final response = payload['response'];
-        if (response is Map) {
-          final rid = response['id'];
-          if (rid is String && rid.isNotEmpty) {
+
+    final response = payload['response'];
+    if (response is Map) {
+      final rid = response['id'];
+      if (rid is String && rid.isNotEmpty) {
         _activeResponseId ??= rid;
       }
     }
 
     // =========================
-// 2) TEXTO DEL ASISTENTE (ELEGIR 1 SOLO STREAM)
-// =========================
+    // 2) TEXTO DEL ASISTENTE (ELEGIR 1 SOLO STREAM)
+    // =========================
+    final isOutputText = (type == 'response.output_text.delta' ||
+        type == 'response.text.delta' ||
+        type == 'response.output_text.done' ||
+        type == 'response.text.done');
 
-// 2.1 Preferido: output_text (más directo)
-final isOutputText = (type == 'response.output_text.delta' ||
-    type == 'response.text.delta' ||
-    type == 'response.output_text.done' ||
-    type == 'response.text.done');
+    if (isOutputText) {
+      _assistantStreamMode ??= 'output_text';
+      if (_assistantStreamMode != 'output_text') return;
 
-if (isOutputText) {
-  _assistantStreamMode ??= 'output_text';
-  if (_assistantStreamMode != 'output_text') return;
+      final delta = _extractAnyText(payload);
+      if (delta.isNotEmpty) onDelta(delta);
 
-  final delta = _extractAnyText(payload);
-  if (delta.isNotEmpty) onDelta(delta);
-
-  if (type.endsWith('.done')) {
-    _safeCompleteOnce(reason: type);
-  }
-  return;
-}
-
-// 2.2 Alternativo: output_item (algunos backends lo usan)
-final isOutputItem = (type == 'response.output_item.added' ||
-    type == 'response.output_item.delta' ||
-    type == 'response.output_item.done');
-
-if (isOutputItem) {
-  // 1) Extrae primero el delta
-  final delta = _extractAssistantDeltaFromOutputItem(payload);
-
-  // 2) Si viene vacío, NO fijes el modo todavía
-  //    (porque a veces "added" llega sin texto y luego el texto llega por output_text)
-  if (delta.trim().isEmpty) {
-    if (type == 'response.output_item.done') {
-      _safeCompleteOnce(reason: type);
+      if (type.endsWith('.done')) {
+        _safeCompleteOnce(reason: type);
+      }
+      return;
     }
-    return;
-  }
 
-  // 3) Recién aquí fijamos el modo
-  _assistantStreamMode ??= 'output_item';
-  if (_assistantStreamMode != 'output_item') return;
+    final isOutputItem = (type == 'response.output_item.added' ||
+        type == 'response.output_item.delta' ||
+        type == 'response.output_item.done');
 
-  // 4) Emitir texto
-  onDelta(delta);
+    if (isOutputItem) {
+      final delta = _extractAssistantDeltaFromOutputItem(payload);
 
-  // 5) Cierre si corresponde
-  if (type == 'response.output_item.done') {
-    _safeCompleteOnce(reason: type);
-  }
-  return;
-}
+      if (delta.trim().isEmpty) {
+        if (type == 'response.output_item.done') {
+          _safeCompleteOnce(reason: type);
+        }
+        return;
+      }
 
+      _assistantStreamMode ??= 'output_item';
+      if (_assistantStreamMode != 'output_item') return;
 
-// 2.3 Fallback: response.delta (más genérico)
-if (type == 'response.delta') {
-  _assistantStreamMode ??= 'response_delta';
-  if (_assistantStreamMode != 'response_delta') return;
+      onDelta(delta);
 
-  final delta = _extractAssistantDeltaFromResponseDelta(payload);
-  if (delta.trim().isNotEmpty) onDelta(delta);
-  return;
-}
+      if (type == 'response.output_item.done') {
+        _safeCompleteOnce(reason: type);
+      }
+      return;
+    }
 
-// 2.4 Último fallback: audio_transcript (si estás usando salida de audio)
-if (type == 'response.audio_transcript.delta' ||
-    type == 'response.audio_transcript.done') {
-  _assistantStreamMode ??= 'audio_transcript';
-  if (_assistantStreamMode != 'audio_transcript') return;
+    if (type == 'response.delta') {
+      _assistantStreamMode ??= 'response_delta';
+      if (_assistantStreamMode != 'response_delta') return;
 
-  final delta = _extractAnyText(payload);
-  if (delta.trim().isNotEmpty) onDelta(delta);
+      final delta = _extractAssistantDeltaFromResponseDelta(payload);
+      if (delta.trim().isNotEmpty) onDelta(delta);
+      return;
+    }
 
-  if (type.endsWith('.done')) {
-    _safeCompleteOnce(reason: type);
-  }
-  return;
-}
+    if (type == 'response.audio_transcript.delta' ||
+        type == 'response.audio_transcript.done') {
+      _assistantStreamMode ??= 'audio_transcript';
+      if (_assistantStreamMode != 'audio_transcript') return;
+
+      final delta = _extractAnyText(payload);
+      if (delta.trim().isNotEmpty) onDelta(delta);
+
+      if (type.endsWith('.done')) {
+        _safeCompleteOnce(reason: type);
+      }
+      return;
+    }
+
     // =========================
     // 3) FIN DE RESPUESTA
     // =========================
-    // Variantes reales que suelen aparecer:
-    // response.done, response.completed, response.failed, response.cancelled
-    // response.error, response.output_text.done (ya cubierto arriba)
     if (type == 'response.done' ||
         type == 'response.completed' ||
         type == 'response.failed' ||
@@ -296,7 +335,6 @@ if (type == 'response.audio_transcript.delta' ||
       return;
     }
 
-    // Algunos otros cierres raros:
     if (type.startsWith('response.') && type.endsWith('.completed')) {
       _safeCompleteOnce(reason: type);
       return;
@@ -327,13 +365,10 @@ if (type == 'response.audio_transcript.delta' ||
   }
 
   /// Extrae texto SOLO de eventos de transcripción.
-  String _extractTranscriptFromTranscriptionEvent(
-      Map<String, dynamic> payload) {
-    // 1) Formato común: payload['delta'] = "..."
+  String _extractTranscriptFromTranscriptionEvent(Map<String, dynamic> payload) {
     final delta = payload['delta'];
     if (delta is String && delta.trim().isNotEmpty) return delta;
 
-    // 2) Otro formato: payload['item']['content'][0]['text']
     final item = payload['item'];
     if (item is Map) {
       final content = item['content'];
@@ -346,11 +381,9 @@ if (type == 'response.audio_transcript.delta' ||
       }
     }
 
-    // 3) Fallback “seguro”
     final t = _extractAnyText(payload).trim();
     if (t.isEmpty) return '';
 
-    // Si parece salida del asistente, no es transcript de usuario
     final lower = t.toLowerCase();
     if (lower.contains('chat:') ||
         lower.contains('sugerencias:') ||
@@ -361,6 +394,27 @@ if (type == 'response.audio_transcript.delta' ||
       return '';
     }
     return t;
+  }
+
+  String _getTranscriptItemId(Map<String, dynamic> payload) {
+    final itemId = payload['item_id'];
+    if (itemId is String && itemId.isNotEmpty) return itemId;
+
+    final item = payload['item'];
+    if (item is Map) {
+      final id = item['id'];
+      if (id is String && id.isNotEmpty) return id;
+    }
+
+    // fallback (último recurso)
+    return '${payload['type']}_${payload.hashCode}';
+  }
+
+  String _diffTranscript(String previous, String current) {
+    if (previous.isEmpty) return current;
+    if (current.startsWith(previous)) return current.substring(previous.length);
+    // si el backend reescribe (no es prefijo), devolvemos todo el current
+    return current;
   }
 
   /// Extrae texto “simple” (delta/text/transcript/content) desde payload genérico.
@@ -382,17 +436,14 @@ if (type == 'response.audio_transcript.delta' ||
     final text = payload['text'];
     if (text is String) return text;
 
-    // A veces viene en payload['value']
     final value = payload['value'];
     if (value is String) return value;
 
-    // fallback profundo
     return _findFirstString(payload,
             keys: const ['delta', 'text', 'transcript', 'content', 'value']) ??
         '';
   }
 
-  /// response.delta suele traer: response.output -> items -> content -> {type:"output_text", text:"..."}
   String _extractAssistantDeltaFromResponseDelta(Map<String, dynamic> payload) {
     final response = payload['response'];
     if (response is! Map) return '';
@@ -414,7 +465,6 @@ if (type == 'response.audio_transcript.delta' ||
           final text = c['text'];
           if (text is String && text.isNotEmpty) sb.write(text);
         }
-        // a veces viene delta dentro
         final d = c['delta'];
         if (d is String && d.isNotEmpty) sb.write(d);
       }
@@ -422,7 +472,6 @@ if (type == 'response.audio_transcript.delta' ||
     return sb.toString();
   }
 
-  /// response.output_item.* a veces trae un item con content/output_text
   String _extractAssistantDeltaFromOutputItem(Map<String, dynamic> payload) {
     final item = payload['item'];
     if (item is! Map) return '';
