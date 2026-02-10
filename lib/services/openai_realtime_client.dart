@@ -16,6 +16,7 @@ class OpenAIRealtimeClient {
     this.onComplete,
     this.showEvents = true,
     String? sessionInstructions,
+    this.sourceTag = '',
   }) : _sessionInstructions = sessionInstructions?.trim() ?? '';
 
   final String openAIKey;
@@ -30,6 +31,7 @@ class OpenAIRealtimeClient {
 
   final VoidCallback? onComplete;
   final bool showEvents;
+  final String sourceTag;
 
   IOWebSocketChannel? _channel;
   String _sessionInstructions = '';
@@ -128,7 +130,7 @@ class OpenAIRealtimeClient {
   void appendAudio(Uint8List audioChunk) {
     final encoded = base64Encode(audioChunk);
     if (showEvents) {
-      debugPrint('OpenAI appendAudio ${audioChunk.length} bytes');
+      debugPrint('OpenAI[$sourceTag] appendAudio ${audioChunk.length} bytes');
     }
     _channel?.sink.add(jsonEncode({
       'type': 'input_audio_buffer.append',
@@ -137,12 +139,12 @@ class OpenAIRealtimeClient {
   }
 
   Future<void> commitBuffer() async {
-    if (showEvents) debugPrint('OpenAI commitBuffer');
+    if (showEvents) debugPrint('OpenAI[$sourceTag] commitBuffer');
     _channel?.sink.add(jsonEncode({'type': 'input_audio_buffer.commit'}));
   }
 
   Future<void> requestResponse({required String instructions}) async {
-    if (showEvents) debugPrint('OpenAI requestResponse');
+    if (showEvents) debugPrint('OpenAI[$sourceTag] requestResponse');
     _completedThisTurn = false; // nuevo turno/respuesta
     _assistantStreamMode = null;
     _activeResponseId = null;
@@ -191,7 +193,7 @@ class OpenAIRealtimeClient {
     // =========================
     if (type == 'error') {
       final msg = _extractErrorMessage(payload);
-      debugPrint('OpenAI ERROR: $msg');
+      debugPrint('OpenAI[$sourceTag] ERROR: $msg');
       _safeCompleteOnce(reason: 'type=error');
       return;
     }
@@ -346,7 +348,7 @@ class OpenAIRealtimeClient {
     _completedThisTurn = true;
 
     if (showEvents) {
-      debugPrint('OpenAI onComplete() reason=$reason');
+      debugPrint('OpenAI[$sourceTag] onComplete() reason=$reason');
     }
     onComplete?.call();
   }

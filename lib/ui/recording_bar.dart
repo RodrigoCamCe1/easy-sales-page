@@ -61,7 +61,8 @@ class _RecordingBarState extends State<RecordingBar> {
   final TextEditingController _manualPromptController = TextEditingController();
 
   final FlutterAudioCapture _audioCapture = FlutterAudioCapture();
-  OpenAIRealtimeClient? _openAIClient;
+  OpenAIRealtimeClient? _openAIClientMic;
+  OpenAIRealtimeClient? _openAIClientSystem;
 
   // ✅ Chat ahora es lista de mensajes (user/assistant)
   final List<_ChatMessage> _chatResponses = [];
@@ -79,11 +80,15 @@ class _RecordingBarState extends State<RecordingBar> {
   String? _lastMicLine;
 
   String _statusMessage = '';
-  Process? _audioProcess;
-  StreamSubscription<List<int>>? _audioSubscription;
-  int _pendingAudioBytes = 0;
+  Process? _audioProcessSystem;
+  Process? _audioProcessMic;
+  StreamSubscription<List<int>>? _audioSubscriptionSystem;
+  StreamSubscription<List<int>>? _audioSubscriptionMic;
+  int _pendingMicBytes = 0;
+  int _pendingSystemBytes = 0;
 
   bool _responseInFlight = false;
+  bool _micResponseInFlight = false;
   bool _finalResponseQueued = false;
   int? _streamingAssistantIndex;
   String _streamingAssistantText = '';
@@ -167,7 +172,8 @@ class _RecordingBarState extends State<RecordingBar> {
         setState(() {
           _promptOverride = prompt.isEmpty ? systemPrompt : prompt;
         });
-        _openAIClient?.updateSessionInstructions(_promptOverride);
+        _openAIClientMic?.updateSessionInstructions(_promptOverride);
+        _openAIClientSystem?.updateSessionInstructions(_promptOverride);
       }
 
       if (call.method == 'setMicMix') {
@@ -204,6 +210,11 @@ class _RecordingBarState extends State<RecordingBar> {
       return;
     }
 
+    await _openAIClientMic?.close();
+    await _openAIClientSystem?.close();
+    _openAIClientMic = null;
+    _openAIClientSystem = null;
+
     // ✅ limpia timers UI transcript
     _uiTranscriptIdleTimer?.cancel();
     _uiTranscriptIdleTimer = null;
@@ -219,8 +230,10 @@ class _RecordingBarState extends State<RecordingBar> {
     _sessionEndedAt = null;
     _conversationSaved = false;
 
-    _pendingAudioBytes = 0;
+    _pendingMicBytes = 0;
+    _pendingSystemBytes = 0;
     _responseInFlight = false;
+    _micResponseInFlight = false;
     _finalResponseQueued = false;
 
     _chatResponses.clear();
@@ -240,24 +253,46 @@ class _RecordingBarState extends State<RecordingBar> {
         : _promptOverride;
     _addLog('Prompt activo: $promptPreview');
 
-    _openAIClient = OpenAIRealtimeClient(
+    _openAIClientMic = OpenAIRealtimeClient(
       openAIKey: openAIKey,
       model: openAIRealtimeModel,
       vadSilenceMs: vadSilenceMs,
       sessionInstructions: _promptOverride,
       onDelta: _appendResponseDelta,
       onTranscriptDelta: (t) {
-        _appendTranscriptDelta(t, source: 'sys');
+        _appendTranscriptDelta(t, source: 'mic');
       },
       onComplete: () {
-        _appendTranscriptDelta('\n', source: 'sys');
         _appendTranscriptDelta('\n', source: 'mic');
         _handleResponseComplete();
       },
       showEvents: showOpenAIEvents,
+      sourceTag: 'mic',
     );
 
-    await _openAIClient?.connect();
+    _openAIClientSystem = null;
+    final hasSystemDevice =
+        Platform.isWindows && windowsAudioDevice.trim().isNotEmpty;
+    if (hasSystemDevice) {
+      _openAIClientSystem = OpenAIRealtimeClient(
+        openAIKey: openAIKey,
+        model: openAIRealtimeModel,
+        vadSilenceMs: vadSilenceMs,
+        sessionInstructions: _promptOverride,
+        onDelta: (_) {},
+        onTranscriptDelta: (t) {
+          _appendTranscriptDelta(t, source: 'sys');
+        },
+        onComplete: () {
+          _appendTranscriptDelta('\n', source: 'sys');
+        },
+        showEvents: showOpenAIEvents,
+        sourceTag: 'system',
+      );
+    }
+
+    await _openAIClientMic?.connect();
+    await _openAIClientSystem?.connect();
 
     setState(() {
       _listening = true;
@@ -304,7 +339,7 @@ class _RecordingBarState extends State<RecordingBar> {
     _realtimeTimer?.cancel();
     _realtimeTimer = Timer.periodic(
       Duration(seconds: realtimeFlushSeconds),
-      (_) => _flushRealtimeResponse(),
+      (_) => _flushRealtimeBoth(),
     );
   }
 
@@ -327,24 +362,24 @@ class _RecordingBarState extends State<RecordingBar> {
     });
     _scrollToBottom(_chatScrollController);
 
-    if (_openAIClient == null) {
-      _openAIClient = OpenAIRealtimeClient(
+    if (_openAIClientMic == null) {
+      _openAIClientMic = OpenAIRealtimeClient(
         openAIKey: openAIKey,
         model: openAIRealtimeModel,
         vadSilenceMs: vadSilenceMs,
         sessionInstructions: _promptOverride,
         onDelta: _appendResponseDelta,
         onTranscriptDelta: (t) {
-          _appendTranscriptDelta(t, source: 'sys');
+          _appendTranscriptDelta(t, source: 'mic');
         },
         onComplete: () {
-          _appendTranscriptDelta('\n', source: 'sys');
           _appendTranscriptDelta('\n', source: 'mic');
           _handleResponseComplete();
         },
         showEvents: showOpenAIEvents,
+        sourceTag: 'mic',
       );
-      await _openAIClient?.connect();
+      await _openAIClientMic?.connect();
     }
 
     _sessionStartedAt ??= DateTime.now();
@@ -354,15 +389,15 @@ class _RecordingBarState extends State<RecordingBar> {
     setState(() {
       _statusMessage = 'Enviando prompt manual';
       _responseInFlight = true;
+      _micResponseInFlight = true;
     });
 
     _manualPromptController.clear();
 
     // ✅ por si venía una transcripción abierta, cerramos líneas antes de responder
-    _appendTranscriptDelta('\n', source: 'sys');
     _appendTranscriptDelta('\n', source: 'mic');
 
-    await _openAIClient?.requestResponse(
+    await _openAIClientMic?.requestResponse(
       instructions: _buildChatInstructions(userPrompt: prompt),
     );
   }
@@ -383,16 +418,24 @@ class _RecordingBarState extends State<RecordingBar> {
       await _audioCapture.stop();
     }
 
-    // ✅ si queda audio pendiente, forzar commit+respuesta
-    if (_pendingAudioBytes > 0) {
-      await _openAIClient?.commitBuffer();
-      _pendingAudioBytes = 0;
+    // ✅ si queda audio pendiente, forzar commit
+    if (_pendingSystemBytes > 0) {
+      await _openAIClientSystem?.commitBuffer();
+      _pendingSystemBytes = 0;
+    }
 
-      if (_responseInFlight) {
+    if (_pendingMicBytes > 0) {
+      await _openAIClientMic?.commitBuffer();
+      _pendingMicBytes = 0;
+
+      if (_micResponseInFlight || _responseInFlight) {
         _finalResponseQueued = true;
       } else {
-        setState(() => _responseInFlight = true);
-        await _openAIClient?.requestResponse(
+        setState(() {
+          _micResponseInFlight = true;
+          _responseInFlight = true;
+        });
+        await _openAIClientMic?.requestResponse(
           instructions: _buildChatInstructions(),
         );
       }
@@ -403,6 +446,14 @@ class _RecordingBarState extends State<RecordingBar> {
       _elapsed = Duration.zero;
       _statusMessage = 'Procesando respuesta';
     });
+
+    if (!_micResponseInFlight && !_responseInFlight && !_finalResponseQueued) {
+      await _openAIClientMic?.close();
+      _openAIClientMic = null;
+      await _openAIClientSystem?.close();
+      _openAIClientSystem = null;
+      _maybeSaveConversation();
+    }
   }
 
   Future<void> _openSettings() async {
@@ -713,19 +764,25 @@ class _RecordingBarState extends State<RecordingBar> {
     _scrollToBottom(_suggestionScrollController);
 
     setState(() {
+      _micResponseInFlight = false;
       _responseInFlight = false;
     });
 
     if (!_listening && _finalResponseQueued) {
       _finalResponseQueued = false;
-      setState(() => _responseInFlight = true);
-      _openAIClient?.requestResponse(instructions: _buildChatInstructions());
+      setState(() {
+        _micResponseInFlight = true;
+        _responseInFlight = true;
+      });
+      _openAIClientMic?.requestResponse(instructions: _buildChatInstructions());
       return;
     }
 
     if (!_listening) {
-      _openAIClient?.close();
-      _openAIClient = null;
+      _openAIClientMic?.close();
+      _openAIClientMic = null;
+      _openAIClientSystem?.close();
+      _openAIClientSystem = null;
       _maybeSaveConversation();
     }
   }
@@ -1252,21 +1309,33 @@ class _RecordingBarState extends State<RecordingBar> {
     return unique.map((line) => '• $line').join('\n');
   }
 
-  String _buildTranscriptText() {
-    final parts = <String>[];
+  List<_TranscriptEntry> _buildTranscriptEntries() {
+    final out = <_TranscriptEntry>[];
 
     for (final transcript in _transcripts) {
       final t = transcript.trim();
-      if (t.isNotEmpty) parts.add('• $t');
+      if (t.isEmpty) continue;
+
+      if (t.startsWith('🎤 ')) {
+        out.add(_TranscriptEntry(text: t.substring(2).trim(), isMic: true));
+      } else if (t.startsWith('🖥️ ')) {
+        out.add(_TranscriptEntry(text: t.substring(3).trim(), isMic: false));
+      } else {
+        out.add(_TranscriptEntry(text: t, isMic: false));
+      }
     }
 
     final currentSys = _currentTranscriptSys.trim();
-    if (currentSys.isNotEmpty) parts.add('• 🖥️ $currentSys');
+    if (currentSys.isNotEmpty) {
+      out.add(_TranscriptEntry(text: currentSys, isMic: false, pending: true));
+    }
 
     final currentMic = _currentTranscriptMic.trim();
-    if (currentMic.isNotEmpty) parts.add('• 🎤 $currentMic');
+    if (currentMic.isNotEmpty) {
+      out.add(_TranscriptEntry(text: currentMic, isMic: true, pending: true));
+    }
 
-    return parts.isEmpty ? '' : parts.join('\n\n');
+    return out;
   }
 
   // ============================
@@ -1274,23 +1343,46 @@ class _RecordingBarState extends State<RecordingBar> {
   // ============================
 
   void _appendAudio(Uint8List bytes) {
-    _pendingAudioBytes += bytes.length;
-    _openAIClient?.appendAudio(bytes);
+    _pendingMicBytes += bytes.length;
+    _openAIClientMic?.appendAudio(bytes);
     _logAudioLevel(bytes);
   }
 
-  Future<void> _flushRealtimeResponse() async {
-  const minCommitBytes = 9600;
-  if (!_listening || _openAIClient == null) return;
-  if (_responseInFlight) return;
-  if (_pendingAudioBytes < minCommitBytes) return;
+  Future<void> _flushRealtimeBoth() async {
+    if (!_listening) return;
+    await _maybeCommitSystem();
+    await _maybeCommitMic();
+  }
 
-  setState(() => _responseInFlight = true);
-  _pendingAudioBytes = 0;
+  Future<void> _maybeCommitSystem() async {
+    const minCommitBytesSystem = 4600;
+    if (_openAIClientSystem == null) return;
+    final bytes = _pendingSystemBytes;
+    if (bytes < minCommitBytesSystem) return;
 
-  await _openAIClient!.commitBuffer();
-  await _openAIClient!.requestResponse(instructions: _buildChatInstructions());
-}
+    await _openAIClientSystem?.commitBuffer();
+    _pendingSystemBytes = 0;
+  }
+
+  Future<void> _maybeCommitMic() async {
+    const minCommitBytesMic = 4600;
+    if (_openAIClientMic == null) return;
+    if (_micResponseInFlight || _responseInFlight) return;
+
+    final bytes = _pendingMicBytes;
+    if (bytes < minCommitBytesMic) return;
+
+    setState(() {
+      _micResponseInFlight = true;
+      _responseInFlight = true;
+    });
+
+    await _openAIClientMic?.commitBuffer();
+    _pendingMicBytes = 0;
+    await _openAIClientMic?.requestResponse(
+      instructions: _buildChatInstructions(),
+    );
+  }
 
   void _logAudioLevel(Uint8List bytes) {
     if (bytes.length < 2) return;
@@ -1340,7 +1432,8 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   Future<void> _startWindowsCapture() async {
-    if (windowsAudioDevice.isEmpty) {
+    final systemDevice = windowsAudioDevice.trim();
+    if (systemDevice.isEmpty) {
       setState(() {
         _statusMessage =
             'Define WINDOWS_AUDIO_DEVICE en .env (ej. "Stereo Mix (Realtek(R) Audio)")';
@@ -1349,115 +1442,116 @@ class _RecordingBarState extends State<RecordingBar> {
       return;
     }
 
-    try {
-      _addLog('Dispositivo de captura: $windowsAudioDevice');
-      if (windowsAudioSampleRate.isNotEmpty) {
-        _addLog('Sample rate de captura: $windowsAudioSampleRate');
-      }
+    await _stopWindowsCapture();
 
-      final args = <String>[];
-
-      String buildInputDevice(String device) {
-        if (windowsAudioBackend == 'wasapi' &&
-            device.toLowerCase() == 'default') {
-          return 'default';
-        }
-        return 'audio=$device';
-      }
-
-      void addInput(String device, {bool loopback = false}) {
-        args.addAll(['-f', windowsAudioBackend]);
-        if (windowsAudioSampleRate.isNotEmpty) {
-          args.addAll(['-sample_rate', windowsAudioSampleRate]);
-        }
-        if (windowsAudioBackend == 'wasapi' && loopback) {
-          _addLog('Captura loopback habilitada (audio de salida)');
-          args.addAll(['-loopback', '1']);
-        }
-        args.addAll(['-i', buildInputDevice(device)]);
-      }
-
-      addInput(
-        windowsAudioDevice,
-        loopback: windowsAudioBackend == 'wasapi' && windowsAudioLoopback,
-      );
-
-      final includeMic = _micMixEnabled && windowsMicDevice.trim().isNotEmpty;
-      if (includeMic) {
-        _addLog('Microfono adicional: $windowsMicDevice');
-        addInput(windowsMicDevice);
-      }
-
-      if (includeMic) {
-        args.addAll([
-          '-filter_complex',
-          'amix=inputs=2:duration=longest:dropout_transition=2',
-          '-ac',
-          '1',
-          '-ar',
-          '16000',
-          '-f',
-          's16le',
-          '-',
-        ]);
-      } else {
-        args.addAll([
-          '-ac',
-          '1',
-          '-ar',
-          '16000',
-          '-f',
-          's16le',
-          '-',
-        ]);
-      }
-
-      _audioProcess = await Process.start('ffmpeg', args);
-      _addLog('ffmpeg arrancado con $windowsAudioDevice');
-    } catch (error) {
-      _addLog('ffmpeg no se pudo iniciar: $error');
-      setState(() {
-        _statusMessage =
-            'No se pudo iniciar ffmpeg; instala la herramienta y comprueba el dispositivo.';
-        _listening = false;
-      });
-      return;
-    }
-
-    _audioSubscription = _audioProcess?.stdout.listen(
-      (chunk) {
-        _appendAudio(Uint8List.fromList(chunk));
-      },
-      onDone: () => _addLog('ffmpeg stdout cerrado'),
-      onError: (error) {
-        setState(() {
-          _statusMessage = 'Error en ffmpeg: $error';
-        });
+    await _startWindowsDeviceCapture(
+      label: 'system',
+      device: systemDevice,
+      loopback: windowsAudioBackend == 'wasapi' && windowsAudioLoopback,
+      onChunk: (bytes) {
+        _pendingSystemBytes += bytes.length;
+        _openAIClientSystem?.appendAudio(bytes);
+        _logAudioLevel(bytes);
       },
     );
 
-    _audioProcess?.exitCode.then((code) {
-      _addLog('ffmpeg finalizo con codigo $code');
-    });
+    final micDevice = windowsMicDevice.trim();
+    final includeMic = _micMixEnabled && micDevice.isNotEmpty;
+    if (includeMic) {
+      await _startWindowsDeviceCapture(
+        label: 'mic',
+        device: micDevice,
+        onChunk: (bytes) {
+          _pendingMicBytes += bytes.length;
+          _openAIClientMic?.appendAudio(bytes);
+          _logAudioLevel(bytes);
+        },
+      );
+    }
+  }
 
-    final stderrStream = _audioProcess?.stderr;
-    if (stderrStream != null) {
-      stderrStream.transform(const Utf8Decoder()).listen((line) {
+  Future<void> _startWindowsDeviceCapture({
+    required String label,
+    required String device,
+    required void Function(Uint8List) onChunk,
+    bool loopback = false,
+  }) async {
+    try {
+      _addLog('Captura $label: $device');
+      final args = <String>[
+        '-f',
+        windowsAudioBackend,
+        if (windowsAudioSampleRate.isNotEmpty) ...[
+          '-sample_rate',
+          windowsAudioSampleRate,
+        ],
+        if (windowsAudioBackend == 'wasapi' && loopback) ...['-loopback', '1'],
+        '-i',
+        (windowsAudioBackend == 'wasapi' && device.toLowerCase() == 'default')
+            ? 'default'
+            : 'audio=$device',
+        '-ac',
+        '1',
+        '-ar',
+        '16000',
+        '-f',
+        's16le',
+        '-',
+      ];
+
+      final process = await Process.start('ffmpeg', args);
+      final subscription = process.stdout.listen(
+        (chunk) => onChunk(Uint8List.fromList(chunk)),
+        onDone: () => _addLog('ffmpeg ($label) stdout cerrado'),
+        onError: (error) {
+          setState(() {
+            _statusMessage = 'Error en ffmpeg ($label): $error';
+          });
+        },
+      );
+
+      if (label == 'system') {
+        _audioProcessSystem = process;
+        _audioSubscriptionSystem = subscription;
+      } else {
+        _audioProcessMic = process;
+        _audioSubscriptionMic = subscription;
+      }
+
+      process.exitCode.then((code) {
+        _addLog('ffmpeg ($label) finalizo con codigo $code');
+      });
+
+      process.stderr.transform(const Utf8Decoder()).listen((line) {
         if (showFfmpegLogs) {
-          _addLog('ffmpeg stderr: $line');
+          _addLog('ffmpeg ($label) stderr: $line');
         }
+      });
+    } catch (error) {
+      _addLog('ffmpeg ($label) no se pudo iniciar: $error');
+      setState(() {
+        _statusMessage =
+            'No se pudo iniciar ffmpeg ($label); instala la herramienta y comprueba el dispositivo.';
+        _listening = false;
       });
     }
   }
 
   Future<void> _stopWindowsCapture() async {
-    await _audioSubscription?.cancel();
-    _audioSubscription = null;
+    await _audioSubscriptionSystem?.cancel();
+    await _audioSubscriptionMic?.cancel();
+    _audioSubscriptionSystem = null;
+    _audioSubscriptionMic = null;
 
-    if (_audioProcess != null) {
-      _audioProcess!.kill();
-      await _audioProcess!.exitCode;
-      _audioProcess = null;
+    if (_audioProcessSystem != null) {
+      _audioProcessSystem!.kill();
+      await _audioProcessSystem!.exitCode;
+      _audioProcessSystem = null;
+    }
+    if (_audioProcessMic != null) {
+      _audioProcessMic!.kill();
+      await _audioProcessMic!.exitCode;
+      _audioProcessMic = null;
     }
   }
 
@@ -1487,11 +1581,14 @@ class _RecordingBarState extends State<RecordingBar> {
     _manualPromptController.dispose();
 
     _audioCapture.stop();
-    _openAIClient?.close();
+    _openAIClientMic?.close();
+    _openAIClientSystem?.close();
 
     if (Platform.isWindows) {
-      _audioSubscription?.cancel();
-      _audioProcess?.kill();
+      _audioSubscriptionSystem?.cancel();
+      _audioSubscriptionMic?.cancel();
+      _audioProcessSystem?.kill();
+      _audioProcessMic?.kill();
     }
 
     super.dispose();
@@ -1739,11 +1836,9 @@ class _RecordingBarState extends State<RecordingBar> {
                               child: _showTranscript
                                   ? _TranscriptionPane(
                                       controller: _transcriptScrollController,
-                                      text: (_transcripts.isNotEmpty ||
-                                              _currentTranscriptSys.isNotEmpty ||
-                                              _currentTranscriptMic.isNotEmpty)
-                                          ? _buildTranscriptText()
-                                          : 'Esperando audio para transcribir',
+                                      entries: _buildTranscriptEntries(),
+                                      emptyText:
+                                          'Esperando audio para transcribir',
                                     )
                                   : _ChatPane(
                                       controller: _chatScrollController,
@@ -1814,27 +1909,73 @@ class _QuickChip extends StatelessWidget {
 class _TranscriptionPane extends StatelessWidget {
   const _TranscriptionPane({
     required this.controller,
-    required this.text,
+    required this.entries,
+    required this.emptyText,
   });
 
   final ScrollController controller;
-  final String text;
+  final List<_TranscriptEntry> entries;
+  final String emptyText;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
-    return SingleChildScrollView(
+    if (entries.isEmpty) {
+      return SingleChildScrollView(
+        controller: controller,
+        physics: const ClampingScrollPhysics(),
+        child: Padding(
+          padding: const EdgeInsets.only(top: 2),
+          child: Text(
+            emptyText,
+            style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                  color: colorScheme.onSurface,
+                ),
+          ),
+        ),
+      );
+    }
+
+    return ListView.builder(
       controller: controller,
       physics: const ClampingScrollPhysics(),
-      child: Padding(
-        padding: const EdgeInsets.only(top: 2),
-        child: Text(
-          text,
-          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                color: colorScheme.onSurface,
+      padding: const EdgeInsets.only(top: 4, bottom: 10),
+      itemCount: entries.length,
+      itemBuilder: (context, index) {
+        final item = entries[index];
+        final isMic = item.isMic;
+        return Align(
+          alignment: isMic ? Alignment.centerRight : Alignment.centerLeft,
+          child: Container(
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            constraints: const BoxConstraints(maxWidth: 560),
+            decoration: BoxDecoration(
+              color: isMic
+                  ? colorScheme.primary.withOpacity(0.22)
+                  : colorScheme.surfaceVariant.withOpacity(0.4),
+              borderRadius: BorderRadius.only(
+                topLeft: const Radius.circular(14),
+                topRight: const Radius.circular(14),
+                bottomLeft:
+                    Radius.circular(isMic ? 14 : (item.pending ? 6 : 14)),
+                bottomRight:
+                    Radius.circular(isMic ? (item.pending ? 6 : 14) : 14),
               ),
-        ),
-      ),
+              border: Border.all(
+                color: colorScheme.outlineVariant.withOpacity(0.35),
+              ),
+            ),
+            child: Text(
+              item.text,
+              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                    color: colorScheme.onSurface,
+                    fontStyle: item.pending ? FontStyle.italic : null,
+                  ),
+            ),
+          ),
+        );
+      },
     );
   }
 }
@@ -1975,6 +2116,18 @@ class _SuggestionsListPane extends StatelessWidget {
 // ✅ Chat: modelos y UI
 // =======================
 
+class _TranscriptEntry {
+  const _TranscriptEntry({
+    required this.text,
+    required this.isMic,
+    this.pending = false,
+  });
+
+  final String text;
+  final bool isMic;
+  final bool pending;
+}
+
 class _ChatMessage {
   _ChatMessage({required this.role, required this.text, DateTime? at})
       : at = at ?? DateTime.now();
@@ -2003,7 +2156,11 @@ class _ChatPane extends StatelessWidget {
 
     final hasAnything = messages.isNotEmpty || isThinking;
     if (!hasAnything) {
-      return _TranscriptionPane(controller: controller, text: emptyText);
+      return _TranscriptionPane(
+        controller: controller,
+        entries: const [],
+        emptyText: emptyText,
+      );
     }
 
     final itemCount = messages.length + (isThinking ? 1 : 0);
