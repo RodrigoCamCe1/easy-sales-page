@@ -1,4 +1,4 @@
-﻿import 'dart:async';
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:math' as math;
@@ -54,6 +54,8 @@ class _RecordingBarState extends State<RecordingBar> {
   Timer? _timer;
   Timer? _realtimeTimer;
   Timer? _uiTranscriptIdleTimer;
+  Timer? _queuedResponseDelayTimer;
+  Timer? _silenceAutoStopTimer;
 
   final ScrollController _chatScrollController = ScrollController();
   final ScrollController _suggestionScrollController = ScrollController();
@@ -90,7 +92,7 @@ class _RecordingBarState extends State<RecordingBar> {
   bool _responseInFlight = false;
   bool _micResponseInFlight = false;
   bool _finalResponseQueued = false;
-  String _queuedResponseSource = 'mic';
+  String _queuedResponseSource = 'sys';
   String _queuedTranscriptKey = '';
   DateTime? _lastVoiceTriggerAt;
   String _lastVoiceTriggerKey = '';
@@ -107,6 +109,21 @@ class _RecordingBarState extends State<RecordingBar> {
   bool _conversationSaved = false;
 
   bool _showTranscript = false;
+  static const Duration _voiceResponseMinInterval = Duration(seconds: 15);
+  static const int _transcriptIdleFlushMs = 1700;
+  static const Duration _micTranscriptMergeWindow = Duration(seconds: 6);
+  static const Duration _autoStopSilenceTimeout = Duration(seconds: 21);
+  static const Duration _micPauseAfterActivity = Duration(seconds: 4);
+  static const int _minSystemWordsPerTurn = 10;
+  static const int _minSystemCharsPerTurn = 30;
+  static const int _novelSystemWordsToBypassCooldown = 15;
+
+  bool get _systemOnlyMode => Platform.isWindows;
+  DateTime? _lastMicTranscriptAt;
+  DateTime? _micPauseUntil;
+  int _systemWordsAccum = 0;
+  int _systemWordsAtLastResponse = 0;
+
   bool _isRealBarWindow() {
     // La barra solo existe cuando fue creada con type=bar
     // Settings nunca debería ejecutar esto
@@ -181,9 +198,7 @@ class _RecordingBarState extends State<RecordingBar> {
       }
 
       if (call.method == 'setMicMix') {
-        final args = call.arguments as Map?;
-        final enabled = args?['enabled'] as bool? ?? false;
-        await _setMicMixEnabled(enabled);
+        await _setMicMixEnabled(_windowsMicAvailable);
       }
 
       return null;
@@ -222,6 +237,10 @@ class _RecordingBarState extends State<RecordingBar> {
     // ✅ limpia timers UI transcript
     _uiTranscriptIdleTimer?.cancel();
     _uiTranscriptIdleTimer = null;
+    _queuedResponseDelayTimer?.cancel();
+    _queuedResponseDelayTimer = null;
+    _silenceAutoStopTimer?.cancel();
+    _silenceAutoStopTimer = null;
 
     _timer?.cancel();
     _timer = Timer.periodic(const Duration(seconds: 1), (timer) {
@@ -239,7 +258,7 @@ class _RecordingBarState extends State<RecordingBar> {
     _responseInFlight = false;
     _micResponseInFlight = false;
     _finalResponseQueued = false;
-    _queuedResponseSource = 'mic';
+    _queuedResponseSource = _systemOnlyMode ? 'sys' : 'mic';
     _queuedTranscriptKey = '';
     _lastVoiceTriggerAt = null;
     _lastVoiceTriggerKey = '';
@@ -252,6 +271,10 @@ class _RecordingBarState extends State<RecordingBar> {
     _currentTranscriptMic = '';
     _lastSysLine = null;
     _lastMicLine = null;
+    _lastMicTranscriptAt = null;
+    _micPauseUntil = null;
+    _systemWordsAccum = 0;
+    _systemWordsAtLastResponse = 0;
 
     _statusMessage = 'Conectando con OpenAI';
 
@@ -306,6 +329,7 @@ class _RecordingBarState extends State<RecordingBar> {
     setState(() {
       _listening = true;
     });
+    _scheduleSilenceAutoStop();
 
     if (Platform.isWindows) {
       await _startWindowsCapture();
@@ -417,6 +441,10 @@ class _RecordingBarState extends State<RecordingBar> {
     _timer?.cancel();
     _realtimeTimer?.cancel();
     _realtimeTimer = null;
+    _queuedResponseDelayTimer?.cancel();
+    _queuedResponseDelayTimer = null;
+    _silenceAutoStopTimer?.cancel();
+    _silenceAutoStopTimer = null;
 
     // Cierra cualquier línea abierta antes de detener captura.
     _appendTranscriptDelta('\n', source: 'sys');
@@ -550,6 +578,9 @@ class _RecordingBarState extends State<RecordingBar> {
   /// Opcional: source = 'sys' o 'mic'
   void _appendTranscriptDelta(String text, {String source = 'sys'}) {
     if (text.isEmpty) return;
+    if (text != '\n' && text.trim().isNotEmpty) {
+      _scheduleSilenceAutoStop();
+    }
 
     // normaliza source
     source = source.toLowerCase().trim();
@@ -569,8 +600,14 @@ class _RecordingBarState extends State<RecordingBar> {
         // dedupe por fuente
         if (isMic) {
           if (_lastMicLine != tagged) {
-            _transcripts.add(tagged);
+            final now = DateTime.now();
+            final merged = _tryMergeMicTranscript(cleaned, now);
+            if (!merged) {
+              _transcripts.add(tagged);
+            }
             _lastMicLine = tagged;
+            _lastMicTranscriptAt = now;
+            _markMicActivity();
             _triggerResponseFromTranscript(
               source: 'mic',
               transcriptLine: normalized,
@@ -580,6 +617,8 @@ class _RecordingBarState extends State<RecordingBar> {
           if (_lastSysLine != tagged) {
             _transcripts.add(tagged);
             _lastSysLine = tagged;
+            _lastMicTranscriptAt = null;
+            _systemWordsAccum += _wordCount(normalized);
             _triggerResponseFromTranscript(
               source: 'sys',
               transcriptLine: normalized,
@@ -596,7 +635,7 @@ class _RecordingBarState extends State<RecordingBar> {
     }
 
     // ⏱️ Idle flush: si no llegan más deltas, cerramos línea automáticamente
-    void bumpIdleFlush({required bool isMic, int ms = 1100}) {
+    void bumpIdleFlush({required bool isMic, int ms = _transcriptIdleFlushMs}) {
       _uiTranscriptIdleTimer?.cancel();
       _uiTranscriptIdleTimer = Timer(Duration(milliseconds: ms), () {
         setState(() {
@@ -614,6 +653,7 @@ class _RecordingBarState extends State<RecordingBar> {
         flushOneLine(isMic: isMic);
       } else {
         if (isMic) {
+          _markMicActivity();
           _currentTranscriptMic += text;
         } else {
           _currentTranscriptSys += text;
@@ -654,6 +694,32 @@ class _RecordingBarState extends State<RecordingBar> {
     }
 
     _scrollToBottom(_transcriptScrollController);
+  }
+
+  bool _tryMergeMicTranscript(String cleaned, DateTime now) {
+    if (_transcripts.isEmpty) return false;
+    final lastIndex = _transcripts.length - 1;
+    final last = _transcripts[lastIndex].trim();
+    if (!last.startsWith('🎤 ')) return false;
+    if (_lastMicTranscriptAt == null ||
+        now.difference(_lastMicTranscriptAt!) > _micTranscriptMergeWindow) {
+      return false;
+    }
+
+    final previous = last.replaceFirst(RegExp(r'^🎤\s*'), '').trim();
+    if (previous.isEmpty) return false;
+
+    final prevKey = previous.toLowerCase();
+    final nextKey = cleaned.trim().toLowerCase();
+    if (nextKey.isEmpty) return false;
+
+    if (prevKey == nextKey || prevKey.contains(nextKey)) return true;
+
+    final merged = nextKey.contains(prevKey)
+        ? cleaned.trim()
+        : '$previous ${cleaned.trim()}';
+    _transcripts[lastIndex] = '🎤 $merged';
+    return true;
   }
 
   List<String> _splitChatIntoBubbles(String chatBlock) {
@@ -782,7 +848,25 @@ class _RecordingBarState extends State<RecordingBar> {
       final queuedSource = _queuedResponseSource;
       _finalResponseQueued = false;
       _queuedTranscriptKey = '';
-      _startVoiceTriggeredResponse(source: queuedSource);
+      final now = DateTime.now();
+      final sinceLast = _lastVoiceTriggerAt == null
+          ? _voiceResponseMinInterval
+          : now.difference(_lastVoiceTriggerAt!);
+      if (sinceLast >= _voiceResponseMinInterval) {
+        _startVoiceTriggeredResponse(source: queuedSource);
+      } else {
+        final delay = _voiceResponseMinInterval - sinceLast;
+        _queuedResponseDelayTimer?.cancel();
+        _queuedResponseDelayTimer = Timer(delay, () {
+          if (!mounted ||
+              !_listening ||
+              _responseInFlight ||
+              _micResponseInFlight) {
+            return;
+          }
+          _startVoiceTriggeredResponse(source: queuedSource);
+        });
+      }
       return;
     }
 
@@ -1390,6 +1474,34 @@ class _RecordingBarState extends State<RecordingBar> {
     return RegExp(r'[A-Za-z0-9ÁÉÍÓÚáéíóúÑñ]').hasMatch(t);
   }
 
+  int _wordCount(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return 0;
+    return t.split(RegExp(r'\s+')).where((w) => w.trim().isNotEmpty).length;
+  }
+
+  bool get _isMicPauseActive {
+    final until = _micPauseUntil;
+    if (until == null) return false;
+    return DateTime.now().isBefore(until);
+  }
+
+  void _markMicActivity() {
+    _micPauseUntil = DateTime.now().add(_micPauseAfterActivity);
+  }
+
+  void _scheduleSilenceAutoStop() {
+    _silenceAutoStopTimer?.cancel();
+    if (!_listening) return;
+    _silenceAutoStopTimer = Timer(_autoStopSilenceTimeout, () {
+      if (!mounted || !_listening) return;
+      setState(() {
+        _statusMessage = 'Silencio por 10s: asesoria detenida automaticamente';
+      });
+      unawaited(_stopListening());
+    });
+  }
+
   OpenAIRealtimeClient? _resolveClientForSource(String source) {
     final normalized = source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
     if (normalized == 'sys') return _openAIClientSystem ?? _openAIClientMic;
@@ -1401,10 +1513,24 @@ class _RecordingBarState extends State<RecordingBar> {
     required String transcriptLine,
   }) {
     if (!_listening) return;
-    if (!_isLikelyVoiceLine(transcriptLine)) return;
+    final normalizedSource =
+        source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
+    if (normalizedSource == 'mic') {
+      _markMicActivity();
+      _finalResponseQueued = false;
+      _queuedTranscriptKey = '';
+      return;
+    }
+    if (normalizedSource != 'sys') return;
+
+    final cleanedLine = transcriptLine.trim();
+    if (!_isLikelyVoiceLine(cleanedLine)) return;
+    if (cleanedLine.length < _minSystemCharsPerTurn) return;
+    if (_wordCount(cleanedLine) < _minSystemWordsPerTurn) return;
+    if (_isMicPauseActive) return;
 
     final now = DateTime.now();
-    final key = transcriptLine.trim().toLowerCase();
+    final key = cleanedLine.toLowerCase();
     if (key.isEmpty) return;
 
     // Evita re-disparar por la misma línea cerrada varias veces.
@@ -1414,19 +1540,22 @@ class _RecordingBarState extends State<RecordingBar> {
       return;
     }
 
-    if (_responseInFlight || _micResponseInFlight) {
-      if (_queuedTranscriptKey == key) return;
-      _finalResponseQueued = true;
-      _queuedResponseSource = source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
-      _queuedTranscriptKey = key;
+    // Solo una respuesta en vuelo.
+    if (_responseInFlight || _micResponseInFlight) return;
+
+    final novelWords = _systemWordsAccum - _systemWordsAtLastResponse;
+    if (_lastVoiceTriggerAt != null &&
+        now.difference(_lastVoiceTriggerAt!) < _voiceResponseMinInterval &&
+        novelWords < _novelSystemWordsToBypassCooldown) {
       return;
     }
 
     _lastVoiceTriggerAt = now;
     _lastVoiceTriggerKey = key;
+    _systemWordsAtLastResponse = _systemWordsAccum;
     _queuedTranscriptKey = '';
     _startVoiceTriggeredResponse(
-      source: source,
+      source: normalizedSource,
       statusMessage: 'Procesando voz detectada',
     );
   }
@@ -1435,7 +1564,8 @@ class _RecordingBarState extends State<RecordingBar> {
     required String source,
     String statusMessage = 'Procesando respuesta',
   }) {
-    final normalizedSource = source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
+    final normalizedSource =
+        source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
     final client = _resolveClientForSource(normalizedSource);
     if (client == null) return;
 
@@ -1506,6 +1636,23 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   Future<void> _setMicMixEnabled(bool enabled) async {
+    if (_systemOnlyMode) {
+      final shouldEnableMic = _windowsMicAvailable;
+      if (_micMixEnabled != shouldEnableMic) {
+        setState(() {
+          _micMixEnabled = shouldEnableMic;
+          _statusMessage = shouldEnableMic
+              ? 'Modo fijo: chat por sistema + transcripcion sistema/microfono.'
+              : 'Modo fijo: chat por sistema.';
+        });
+        if (Platform.isWindows && _listening) {
+          await _stopWindowsCapture();
+          await _startWindowsCapture();
+        }
+      }
+      return;
+    }
+
     if (!_windowsMicAvailable && enabled) {
       setState(() {
         _statusMessage =
@@ -1669,6 +1816,8 @@ class _RecordingBarState extends State<RecordingBar> {
     _timer?.cancel();
     _realtimeTimer?.cancel();
     _uiTranscriptIdleTimer?.cancel();
+    _queuedResponseDelayTimer?.cancel();
+    _silenceAutoStopTimer?.cancel();
     _chatScrollController.dispose();
     _suggestionScrollController.dispose();
     _transcriptScrollController.dispose();

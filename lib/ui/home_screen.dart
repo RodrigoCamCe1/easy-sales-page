@@ -31,31 +31,31 @@ class _HomeScreenState extends State<HomeScreen> {
     _searchController.addListener(_onSearchChanged);
     _loadConversations();
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
-  // ⚠️ IGNORAR TODO lo que NO venga de la barra
-  if (_barWindow == null || fromWindowId != _barWindow!.windowId) {
-    return null;
-  }
+      // ⚠️ IGNORAR TODO lo que NO venga de la barra
+      if (_barWindow == null || fromWindowId != _barWindow!.windowId) {
+        return null;
+      }
 
-  switch (call.method) {
-    case 'barOpened':
-      await windowManager.hide();
-      break;
+      switch (call.method) {
+        case 'barOpened':
+          await windowManager.hide();
+          break;
 
-    case 'barMinimizeRequested':
-      await _barWindow?.hide();
-      break;
+        case 'barMinimizeRequested':
+          await _barWindow?.hide();
+          break;
 
-    case 'barCloseRequested':
-    case 'barClosed':
-      await _barWindow?.close();
-      _barWindow = null;
-      await windowManager.show();
-      await windowManager.focus();
-      break;
-  }
+        case 'barCloseRequested':
+        case 'barClosed':
+          await _barWindow?.close();
+          _barWindow = null;
+          await windowManager.show();
+          await windowManager.focus();
+          break;
+      }
 
-  return null;
-});
+      return null;
+    });
   }
 
   void _onSearchChanged() {
@@ -341,13 +341,16 @@ class _HomeScreenState extends State<HomeScreen> {
                         child: Row(
                           children: [
                             Icon(Icons.search,
-                                size: 18,
-                                color: Colors.white.withOpacity(0.6)),
+                                size: 18, color: Colors.white.withOpacity(0.6)),
                             const SizedBox(width: 8),
                             Expanded(
                               child: TextField(
                                 controller: _searchController,
+                                textAlignVertical: TextAlignVertical.center,
                                 decoration: const InputDecoration(
+                                  isDense: true,
+                                  contentPadding:
+                                      EdgeInsets.symmetric(vertical: 8),
                                   border: InputBorder.none,
                                   hintText: 'Buscar conversaciones...',
                                 ),
@@ -450,7 +453,8 @@ class _HomeScreenState extends State<HomeScreen> {
                           const Spacer(),
                           ElevatedButton.icon(
                             onPressed: _openRecordingBar,
-                            icon: const Icon(Icons.play_arrow_rounded, size: 18),
+                            icon:
+                                const Icon(Icons.play_arrow_rounded, size: 18),
                             label: const Text('Start AsesorIA'),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF5CB2FF),

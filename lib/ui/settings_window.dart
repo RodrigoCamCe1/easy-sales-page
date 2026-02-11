@@ -96,23 +96,19 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
         // Best-effort broadcast to the main window.
       }
     }
+
+    try {
+      await WindowController.fromWindowId(widget.windowId).close();
+    } catch (_) {
+      if (mounted) {
+        Navigator.of(context).maybePop();
+      }
+    }
   }
 
   void _openMicPrivacySettings() {
     if (!Platform.isWindows) return;
     Process.start('cmd', ['/c', 'start', 'ms-settings:privacy-microphone']);
-  }
-
-  Future<void> _setMicMix(bool enabled) async {
-    try {
-      await DesktopMultiWindow.invokeMethod(
-        widget.mainWindowId,
-        'setMicMix',
-        {'enabled': enabled},
-      );
-    } catch (_) {
-      // Best-effort control of main window capture.
-    }
   }
 
   Future<void> _loadPromptFromFile() async {
@@ -146,24 +142,16 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
             const Text(
               'Aqui puedes seleccionar la fuente de audio (por ejemplo, un dispositivo loopback) '
               'y la carpeta de salida. La captura de audio del sistema requiere integrar un '
-              'plugin nativo o usar un dispositivo virtual como VB-Audio/BlackHole. '
-              'En Windows puedes definir WINDOWS_MIC_DEVICE para mezclar microfono.',
+              'plugin nativo o usar un dispositivo virtual como VB-Audio/BlackHole.',
             ),
             if (Platform.isWindows) ...[
               const SizedBox(height: 16),
-              const Text('Modo de escucha'),
+              const Text('Modo de escucha fijo'),
               const SizedBox(height: 8),
-              Row(
+              const Row(
                 children: [
-                  TextButton(
-                    onPressed: () => _setMicMix(false),
-                    child: const Text('Solo PC'),
-                  ),
-                  const SizedBox(width: 8),
-                  TextButton(
-                    onPressed: () => _setMicMix(true),
-                    child: const Text('PC + Mic'),
-                  ),
+                  Text(
+                      'Chat/sugerencias: sistema | Transcripcion: sistema + microfono'),
                 ],
               ),
             ],
