@@ -90,6 +90,10 @@ class _RecordingBarState extends State<RecordingBar> {
   bool _responseInFlight = false;
   bool _micResponseInFlight = false;
   bool _finalResponseQueued = false;
+  String _queuedResponseSource = 'mic';
+  String _queuedTranscriptKey = '';
+  DateTime? _lastVoiceTriggerAt;
+  String _lastVoiceTriggerKey = '';
   int? _streamingAssistantIndex;
   String _streamingAssistantText = '';
   bool _assistantStreamStarted = false;
@@ -235,6 +239,10 @@ class _RecordingBarState extends State<RecordingBar> {
     _responseInFlight = false;
     _micResponseInFlight = false;
     _finalResponseQueued = false;
+    _queuedResponseSource = 'mic';
+    _queuedTranscriptKey = '';
+    _lastVoiceTriggerAt = null;
+    _lastVoiceTriggerKey = '';
 
     _chatResponses.clear();
     _suggestions.clear();
@@ -279,12 +287,13 @@ class _RecordingBarState extends State<RecordingBar> {
         model: openAIRealtimeModel,
         vadSilenceMs: vadSilenceMs,
         sessionInstructions: _promptOverride,
-        onDelta: (_) {},
+        onDelta: _appendResponseDelta,
         onTranscriptDelta: (t) {
           _appendTranscriptDelta(t, source: 'sys');
         },
         onComplete: () {
           _appendTranscriptDelta('\n', source: 'sys');
+          _handleResponseComplete();
         },
         showEvents: showOpenAIEvents,
         sourceTag: 'system',
@@ -409,6 +418,10 @@ class _RecordingBarState extends State<RecordingBar> {
     _realtimeTimer?.cancel();
     _realtimeTimer = null;
 
+    // Cierra cualquier línea abierta antes de detener captura.
+    _appendTranscriptDelta('\n', source: 'sys');
+    _appendTranscriptDelta('\n', source: 'mic');
+
     _sessionEndedAt = DateTime.now();
 
     if (Platform.isWindows) {
@@ -427,18 +440,6 @@ class _RecordingBarState extends State<RecordingBar> {
     if (_pendingMicBytes > 0) {
       await _openAIClientMic?.commitBuffer();
       _pendingMicBytes = 0;
-
-      if (_micResponseInFlight || _responseInFlight) {
-        _finalResponseQueued = true;
-      } else {
-        setState(() {
-          _micResponseInFlight = true;
-          _responseInFlight = true;
-        });
-        await _openAIClientMic?.requestResponse(
-          instructions: _buildChatInstructions(),
-        );
-      }
     }
 
     setState(() {
@@ -562,6 +563,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
       final cleaned = _cleanTranscriptChunk(chunk);
       if (cleaned != null && cleaned.trim().isNotEmpty) {
+        final normalized = cleaned.trim();
         final tagged = isMic ? '🎤 $cleaned' : '🖥️ $cleaned';
 
         // dedupe por fuente
@@ -569,11 +571,19 @@ class _RecordingBarState extends State<RecordingBar> {
           if (_lastMicLine != tagged) {
             _transcripts.add(tagged);
             _lastMicLine = tagged;
+            _triggerResponseFromTranscript(
+              source: 'mic',
+              transcriptLine: normalized,
+            );
           }
         } else {
           if (_lastSysLine != tagged) {
             _transcripts.add(tagged);
             _lastSysLine = tagged;
+            _triggerResponseFromTranscript(
+              source: 'sys',
+              transcriptLine: normalized,
+            );
           }
         }
       }
@@ -768,13 +778,11 @@ class _RecordingBarState extends State<RecordingBar> {
       _responseInFlight = false;
     });
 
-    if (!_listening && _finalResponseQueued) {
+    if (_finalResponseQueued) {
+      final queuedSource = _queuedResponseSource;
       _finalResponseQueued = false;
-      setState(() {
-        _micResponseInFlight = true;
-        _responseInFlight = true;
-      });
-      _openAIClientMic?.requestResponse(instructions: _buildChatInstructions());
+      _queuedTranscriptKey = '';
+      _startVoiceTriggeredResponse(source: queuedSource);
       return;
     }
 
@@ -1367,21 +1375,107 @@ class _RecordingBarState extends State<RecordingBar> {
   Future<void> _maybeCommitMic() async {
     const minCommitBytesMic = 4600;
     if (_openAIClientMic == null) return;
-    if (_micResponseInFlight || _responseInFlight) return;
 
     final bytes = _pendingMicBytes;
     if (bytes < minCommitBytesMic) return;
 
+    await _openAIClientMic?.commitBuffer();
+    _pendingMicBytes = 0;
+  }
+
+  bool _isLikelyVoiceLine(String line) {
+    final t = line.trim();
+    if (t.isEmpty) return false;
+    if (t.length < 3) return false;
+    return RegExp(r'[A-Za-z0-9ÁÉÍÓÚáéíóúÑñ]').hasMatch(t);
+  }
+
+  OpenAIRealtimeClient? _resolveClientForSource(String source) {
+    final normalized = source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
+    if (normalized == 'sys') return _openAIClientSystem ?? _openAIClientMic;
+    return _openAIClientMic ?? _openAIClientSystem;
+  }
+
+  void _triggerResponseFromTranscript({
+    required String source,
+    required String transcriptLine,
+  }) {
+    if (!_listening) return;
+    if (!_isLikelyVoiceLine(transcriptLine)) return;
+
+    final now = DateTime.now();
+    final key = transcriptLine.trim().toLowerCase();
+    if (key.isEmpty) return;
+
+    // Evita re-disparar por la misma línea cerrada varias veces.
+    if (_lastVoiceTriggerKey == key &&
+        _lastVoiceTriggerAt != null &&
+        now.difference(_lastVoiceTriggerAt!) < const Duration(seconds: 12)) {
+      return;
+    }
+
+    if (_responseInFlight || _micResponseInFlight) {
+      if (_queuedTranscriptKey == key) return;
+      _finalResponseQueued = true;
+      _queuedResponseSource = source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
+      _queuedTranscriptKey = key;
+      return;
+    }
+
+    _lastVoiceTriggerAt = now;
+    _lastVoiceTriggerKey = key;
+    _queuedTranscriptKey = '';
+    _startVoiceTriggeredResponse(
+      source: source,
+      statusMessage: 'Procesando voz detectada',
+    );
+  }
+
+  void _startVoiceTriggeredResponse({
+    required String source,
+    String statusMessage = 'Procesando respuesta',
+  }) {
+    final normalizedSource = source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
+    final client = _resolveClientForSource(normalizedSource);
+    if (client == null) return;
+
     setState(() {
       _micResponseInFlight = true;
       _responseInFlight = true;
+      _statusMessage = statusMessage;
     });
 
-    await _openAIClientMic?.commitBuffer();
-    _pendingMicBytes = 0;
-    await _openAIClientMic?.requestResponse(
-      instructions: _buildChatInstructions(),
-    );
+    unawaited(_requestResponseForSource(normalizedSource, client));
+  }
+
+  Future<void> _requestResponseForSource(
+    String source,
+    OpenAIRealtimeClient client,
+  ) async {
+    try {
+      if (source == 'sys') {
+        if (_pendingSystemBytes > 0) {
+          await _openAIClientSystem?.commitBuffer();
+          _pendingSystemBytes = 0;
+        }
+      } else {
+        if (_pendingMicBytes > 0) {
+          await _openAIClientMic?.commitBuffer();
+          _pendingMicBytes = 0;
+        }
+      }
+
+      await client.requestResponse(
+        instructions: _buildChatInstructions(),
+      );
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _micResponseInFlight = false;
+        _responseInFlight = false;
+        _statusMessage = 'Error solicitando respuesta: $error';
+      });
+    }
   }
 
   void _logAudioLevel(Uint8List bytes) {

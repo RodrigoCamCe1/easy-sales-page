@@ -57,7 +57,7 @@ class ConversationDetailPage extends StatelessWidget {
           children: [
             _ChatTab(messages: conversation.messages),
             _BulletListTab(items: conversation.suggestions),
-            _BulletListTab(items: conversation.transcripts),
+            _TranscriptTab(items: conversation.transcripts),
           ],
         ),
       ),
@@ -116,5 +116,91 @@ class _BulletListTab extends StatelessWidget {
         );
       },
     );
+  }
+}
+
+class _TranscriptTab extends StatelessWidget {
+  const _TranscriptTab({required this.items});
+
+  final List<String> items;
+
+  bool get _hasBubbleFormat {
+    return items.any((line) {
+      final t = line.trimLeft();
+      return t.startsWith('🎤 ') || t.startsWith('🖥️ ') || t.startsWith('🖥 ');
+    });
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    if (!_hasBubbleFormat) {
+      return _BulletListTab(items: items);
+    }
+
+    final entries = items
+        .map(_TranscriptBubbleEntry.fromRaw)
+        .where((e) => e.text.isNotEmpty)
+        .toList();
+
+    return ListView.builder(
+      padding: const EdgeInsets.all(12),
+      itemCount: entries.length,
+      itemBuilder: (context, index) {
+        final entry = entries[index];
+        final align =
+            entry.isMic ? Alignment.centerRight : Alignment.centerLeft;
+        final bgColor = entry.isMic
+            ? const Color(0xFF2F7C4E).withOpacity(0.9)
+            : Theme.of(context).colorScheme.surfaceVariant;
+        final fgColor = entry.isMic ? Colors.white : null;
+
+        return Align(
+          alignment: align,
+          child: Container(
+            constraints: const BoxConstraints(maxWidth: 560),
+            margin: const EdgeInsets.symmetric(vertical: 4),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              color: bgColor,
+              borderRadius: BorderRadius.circular(14),
+            ),
+            child: Text(
+              entry.text,
+              style: TextStyle(color: fgColor),
+            ),
+          ),
+        );
+      },
+    );
+  }
+}
+
+class _TranscriptBubbleEntry {
+  const _TranscriptBubbleEntry({required this.text, required this.isMic});
+
+  final String text;
+  final bool isMic;
+
+  static _TranscriptBubbleEntry fromRaw(String raw) {
+    final t = raw.trim();
+    if (t.startsWith('🎤 ')) {
+      return _TranscriptBubbleEntry(
+        text: t.substring(2).trim(),
+        isMic: true,
+      );
+    }
+    if (t.startsWith('🖥️ ')) {
+      return _TranscriptBubbleEntry(
+        text: t.substring(3).trim(),
+        isMic: false,
+      );
+    }
+    if (t.startsWith('🖥 ')) {
+      return _TranscriptBubbleEntry(
+        text: t.substring(2).trim(),
+        isMic: false,
+      );
+    }
+    return _TranscriptBubbleEntry(text: t, isMic: false);
   }
 }

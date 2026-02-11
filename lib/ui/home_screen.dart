@@ -19,12 +19,16 @@ class HomeScreen extends StatefulWidget {
 class _HomeScreenState extends State<HomeScreen> {
   final TextEditingController _searchController = TextEditingController();
   List<Conversation> _conversations = [];
+  String _searchQuery = '';
+  bool _favoritesOnly = false;
+  DateTime? _selectedDate;
   bool _loading = true;
   WindowController? _barWindow;
 
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(_onSearchChanged);
     _loadConversations();
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
   // ⚠️ IGNORAR TODO lo que NO venga de la barra
@@ -52,6 +56,178 @@ class _HomeScreenState extends State<HomeScreen> {
 
   return null;
 });
+  }
+
+  void _onSearchChanged() {
+    final next = _searchController.text.trim();
+    if (next == _searchQuery) return;
+    setState(() {
+      _searchQuery = next;
+    });
+  }
+
+  List<Conversation> get _visibleConversations {
+    final source = _favoritesOnly
+        ? _conversations.where((c) => c.isFavorite).toList()
+        : _conversations;
+    final dateFiltered = _selectedDate == null
+        ? source
+        : source.where((c) => _isSameDay(c.endedAt, _selectedDate!)).toList();
+    final query = _searchQuery.toLowerCase().trim();
+    if (query.isEmpty) return dateFiltered;
+
+    bool matches(Conversation item) {
+      if (item.title.toLowerCase().contains(query)) return true;
+      if (item.preview.toLowerCase().contains(query)) return true;
+      if (item.messages.any((m) => m.text.toLowerCase().contains(query))) {
+        return true;
+      }
+      if (item.suggestions.any((s) => s.toLowerCase().contains(query))) {
+        return true;
+      }
+      if (item.transcripts.any((t) => t.toLowerCase().contains(query))) {
+        return true;
+      }
+      return false;
+    }
+
+    return dateFiltered.where(matches).toList();
+  }
+
+  bool _isSameDay(DateTime a, DateTime b) {
+    return a.year == b.year && a.month == b.month && a.day == b.day;
+  }
+
+  String _formatDate(DateTime dt) {
+    final d = dt.day.toString().padLeft(2, '0');
+    final m = dt.month.toString().padLeft(2, '0');
+    return '$d/$m/${dt.year}';
+  }
+
+  Future<void> _pickDateFilter() async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: _selectedDate ?? now,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(now.year + 5),
+      locale: const Locale('es', 'ES'),
+      helpText: 'Filtrar por fecha',
+      cancelText: 'Cancelar',
+      confirmText: 'Aplicar',
+    );
+    if (!mounted || picked == null) return;
+    setState(() {
+      _selectedDate = picked;
+    });
+  }
+
+  void _clearDateFilter() {
+    if (_selectedDate == null) return;
+    setState(() {
+      _selectedDate = null;
+    });
+  }
+
+  Future<void> _persistConversations() async {
+    await ConversationStore.instance.saveAll(_conversations);
+  }
+
+  Future<void> _renameConversation(Conversation item) async {
+    final controller = TextEditingController(text: item.title);
+    final renamed = await showDialog<String>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Editar nombre'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          maxLength: 80,
+          decoration: const InputDecoration(
+            hintText: 'Nombre de la conversación',
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, controller.text.trim()),
+            child: const Text('Guardar'),
+          ),
+        ],
+      ),
+    );
+
+    if (!mounted) return;
+    final nextTitle = (renamed ?? '').trim();
+    if (nextTitle.isEmpty || nextTitle == item.title) return;
+
+    final index = _conversations.indexWhere((c) => c.id == item.id);
+    if (index == -1) return;
+
+    setState(() {
+      _conversations[index] = _conversations[index].copyWith(title: nextTitle);
+    });
+    await _persistConversations();
+  }
+
+  Future<void> _toggleFavoriteConversation(Conversation item) async {
+    final index = _conversations.indexWhere((c) => c.id == item.id);
+    if (index == -1) return;
+
+    setState(() {
+      final current = _conversations[index];
+      _conversations[index] = current.copyWith(isFavorite: !current.isFavorite);
+    });
+    await _persistConversations();
+  }
+
+  Future<void> _deleteConversation(Conversation item) async {
+    final shouldDelete = await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            title: const Text('Borrar conversación'),
+            content: Text(
+              '¿Seguro que quieres borrar "${item.title}"? Esta acción no se puede deshacer.',
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(context, false),
+                child: const Text('Cancelar'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.pop(context, true),
+                child: const Text('Borrar'),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+
+    if (!mounted || !shouldDelete) return;
+    setState(() {
+      _conversations.removeWhere((c) => c.id == item.id);
+    });
+    await _persistConversations();
+  }
+
+  Future<void> _onConversationAction(
+    _ConversationAction action,
+    Conversation item,
+  ) async {
+    switch (action) {
+      case _ConversationAction.rename:
+        await _renameConversation(item);
+        break;
+      case _ConversationAction.favorite:
+        await _toggleFavoriteConversation(item);
+        break;
+      case _ConversationAction.delete:
+        await _deleteConversation(item);
+        break;
+    }
   }
 
   Future<void> _loadConversations() async {
@@ -106,6 +282,7 @@ class _HomeScreenState extends State<HomeScreen> {
 
   @override
   void dispose() {
+    _searchController.removeListener(_onSearchChanged);
     _searchController.dispose();
     super.dispose();
   }
@@ -172,12 +349,66 @@ class _HomeScreenState extends State<HomeScreen> {
                                 controller: _searchController,
                                 decoration: const InputDecoration(
                                   border: InputBorder.none,
-                                  hintText: 'Search or ask anything...',
+                                  hintText: 'Buscar conversaciones...',
                                 ),
                                 style: textTheme.bodyMedium
                                     ?.copyWith(color: Colors.white),
                               ),
                             ),
+                            Tooltip(
+                              message: _favoritesOnly
+                                  ? 'Mostrar todas'
+                                  : 'Mostrar solo favoritas',
+                              child: IconButton(
+                                visualDensity: VisualDensity.compact,
+                                splashRadius: 18,
+                                onPressed: () {
+                                  setState(() {
+                                    _favoritesOnly = !_favoritesOnly;
+                                  });
+                                },
+                                icon: Icon(
+                                  _favoritesOnly
+                                      ? Icons.star_rounded
+                                      : Icons.star_border_rounded,
+                                  size: 19,
+                                  color: _favoritesOnly
+                                      ? const Color(0xFFFFD45C)
+                                      : Colors.white70,
+                                ),
+                              ),
+                            ),
+                            Tooltip(
+                              message: _selectedDate == null
+                                  ? 'Filtrar por fecha'
+                                  : 'Fecha: ${_formatDate(_selectedDate!)}',
+                              child: IconButton(
+                                visualDensity: VisualDensity.compact,
+                                splashRadius: 18,
+                                onPressed: _pickDateFilter,
+                                icon: Icon(
+                                  Icons.calendar_month_rounded,
+                                  size: 19,
+                                  color: _selectedDate == null
+                                      ? Colors.white70
+                                      : const Color(0xFF7FC3FF),
+                                ),
+                              ),
+                            ),
+                            if (_selectedDate != null)
+                              Tooltip(
+                                message: 'Quitar filtro de fecha',
+                                child: IconButton(
+                                  visualDensity: VisualDensity.compact,
+                                  splashRadius: 18,
+                                  onPressed: _clearDateFilter,
+                                  icon: const Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                    color: Colors.white60,
+                                  ),
+                                ),
+                              ),
                           ],
                         ),
                       ),
@@ -279,11 +510,17 @@ class _HomeScreenState extends State<HomeScreen> {
                       const SizedBox(height: 12),
                       if (_loading)
                         const Center(child: CircularProgressIndicator())
-                      else if (_conversations.isEmpty)
-                        _EmptyState(onStart: _openRecordingBar)
+                      else if (_visibleConversations.isEmpty)
+                        (_searchQuery.isNotEmpty ||
+                                _favoritesOnly ||
+                                _selectedDate != null
+                            ? _NoFilteredResults(
+                                message: _buildNoResultsMessage(),
+                              )
+                            : _EmptyState(onStart: _openRecordingBar))
                       else
                         Column(
-                          children: _conversations
+                          children: _visibleConversations
                               .map(
                                 (item) => _ConversationTile(
                                   item: item,
@@ -297,6 +534,8 @@ class _HomeScreenState extends State<HomeScreen> {
                                       ),
                                     );
                                   },
+                                  onAction: (action) =>
+                                      _onConversationAction(action, item),
                                 ),
                               )
                               .toList(),
@@ -311,6 +550,28 @@ class _HomeScreenState extends State<HomeScreen> {
       ),
       floatingActionButton: null,
     );
+  }
+
+  String _buildNoResultsMessage() {
+    if (_searchQuery.isNotEmpty && _selectedDate != null && _favoritesOnly) {
+      return 'No hay favoritas para "$_searchQuery" en ${_formatDate(_selectedDate!)}.';
+    }
+    if (_searchQuery.isNotEmpty && _selectedDate != null) {
+      return 'No hay conversaciones para "$_searchQuery" en ${_formatDate(_selectedDate!)}.';
+    }
+    if (_selectedDate != null && _favoritesOnly) {
+      return 'No hay favoritas en ${_formatDate(_selectedDate!)}.';
+    }
+    if (_selectedDate != null) {
+      return 'No hay conversaciones en ${_formatDate(_selectedDate!)}.';
+    }
+    if (_favoritesOnly && _searchQuery.isNotEmpty) {
+      return 'No hay favoritas para "$_searchQuery".';
+    }
+    if (_favoritesOnly) {
+      return 'Aun no tienes conversaciones favoritas.';
+    }
+    return 'No se encontraron conversaciones para "$_searchQuery".';
   }
 }
 
@@ -491,15 +752,22 @@ class _SmallCard extends StatelessWidget {
 }
 
 class _ConversationTile extends StatelessWidget {
-  const _ConversationTile({required this.item, this.onTap});
+  const _ConversationTile({
+    required this.item,
+    this.onTap,
+    this.onAction,
+  });
 
   final Conversation item;
   final VoidCallback? onTap;
+  final ValueChanged<_ConversationAction>? onAction;
 
   @override
   Widget build(BuildContext context) {
     final time = TimeOfDay.fromDateTime(item.endedAt);
     final duration = Duration(seconds: item.durationSeconds);
+    final dateLabel =
+        '${item.endedAt.day.toString().padLeft(2, '0')}/${item.endedAt.month.toString().padLeft(2, '0')}/${item.endedAt.year}';
     final timeLabel =
         '${time.hour.toString().padLeft(2, '0')}:${time.minute.toString().padLeft(2, '0')}';
     final durationLabel =
@@ -542,8 +810,50 @@ class _ConversationTile extends StatelessWidget {
             Column(
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    if (item.isFavorite)
+                      const Padding(
+                        padding: EdgeInsets.only(right: 6),
+                        child: Icon(
+                          Icons.star_rounded,
+                          color: Color(0xFFFFD45C),
+                          size: 18,
+                        ),
+                      ),
+                    PopupMenuButton<_ConversationAction>(
+                      icon: const Icon(
+                        Icons.more_vert_rounded,
+                        color: Colors.white70,
+                        size: 20,
+                      ),
+                      onSelected: (action) => onAction?.call(action),
+                      itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: _ConversationAction.rename,
+                          child: Text('Editar nombre'),
+                        ),
+                        PopupMenuItem(
+                          value: _ConversationAction.favorite,
+                          child: Text(
+                            item.isFavorite
+                                ? 'Quitar de favoritos'
+                                : 'Añadir a favoritos',
+                          ),
+                        ),
+                        const PopupMenuItem(
+                          value: _ConversationAction.delete,
+                          child: Text('Borrar'),
+                        ),
+                      ],
+                    ),
+                  ],
+                ),
                 _Tag(label: durationLabel),
                 const SizedBox(height: 6),
+                Text(dateLabel, style: const TextStyle(color: Colors.white60)),
+                const SizedBox(height: 2),
                 Text(timeLabel, style: const TextStyle(color: Colors.white60)),
               ],
             ),
@@ -552,6 +862,12 @@ class _ConversationTile extends StatelessWidget {
       ),
     );
   }
+}
+
+enum _ConversationAction {
+  rename,
+  favorite,
+  delete,
 }
 
 class _Tag extends StatelessWidget {
@@ -598,6 +914,35 @@ class _EmptyState extends StatelessWidget {
           ElevatedButton(
             onPressed: onStart,
             child: const Text('Iniciar AsesorIA'),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _NoFilteredResults extends StatelessWidget {
+  const _NoFilteredResults({required this.message});
+
+  final String message;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(24),
+      decoration: BoxDecoration(
+        color: Colors.white.withOpacity(0.04),
+        borderRadius: BorderRadius.circular(18),
+        border: Border.all(color: Colors.white.withOpacity(0.08)),
+      ),
+      child: Column(
+        children: [
+          const Icon(Icons.search_off_rounded, color: Colors.white54),
+          const SizedBox(height: 10),
+          Text(
+            message,
+            style: const TextStyle(color: Colors.white70),
+            textAlign: TextAlign.center,
           ),
         ],
       ),

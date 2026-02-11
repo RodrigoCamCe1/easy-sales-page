@@ -33,6 +33,7 @@ class Conversation {
     this.messages = const [],
     this.suggestions = const [],
     this.transcripts = const [],
+    this.isFavorite = false,
   });
 
   final String id;
@@ -44,6 +45,33 @@ class Conversation {
   final List<ConversationMessage> messages;
   final List<String> suggestions;
   final List<String> transcripts;
+  final bool isFavorite;
+
+  Conversation copyWith({
+    String? id,
+    String? title,
+    String? preview,
+    DateTime? startedAt,
+    DateTime? endedAt,
+    int? durationSeconds,
+    List<ConversationMessage>? messages,
+    List<String>? suggestions,
+    List<String>? transcripts,
+    bool? isFavorite,
+  }) {
+    return Conversation(
+      id: id ?? this.id,
+      title: title ?? this.title,
+      preview: preview ?? this.preview,
+      startedAt: startedAt ?? this.startedAt,
+      endedAt: endedAt ?? this.endedAt,
+      durationSeconds: durationSeconds ?? this.durationSeconds,
+      messages: messages ?? this.messages,
+      suggestions: suggestions ?? this.suggestions,
+      transcripts: transcripts ?? this.transcripts,
+      isFavorite: isFavorite ?? this.isFavorite,
+    );
+  }
 
   Map<String, dynamic> toJson() => {
         'id': id,
@@ -55,6 +83,7 @@ class Conversation {
         'messages': messages.map((m) => m.toJson()).toList(),
         'suggestions': suggestions,
         'transcripts': transcripts,
+        'isFavorite': isFavorite,
       };
 
   static Conversation fromJson(Map<String, dynamic> json) {
@@ -75,6 +104,7 @@ class Conversation {
       transcripts: ((json['transcripts'] ?? []) as List)
           .map((e) => e.toString())
           .toList(),
+      isFavorite: json['isFavorite'] as bool? ?? false,
     );
   }
 }
