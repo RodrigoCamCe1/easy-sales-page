@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../models/conversation.dart';
 
@@ -15,26 +16,34 @@ class ConversationDetailPage extends StatelessWidget {
 
     if (isLegacy) {
       return Scaffold(
-        appBar: AppBar(title: Text(conversation.title)),
-        body: const Center(
-          child: Padding(
-            padding: EdgeInsets.all(24),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Icon(Icons.history_rounded, size: 44),
-                SizedBox(height: 12),
-                Text(
-                  'Esta conversaci\u00f3n fue guardada con una versi\u00f3n anterior.',
-                  textAlign: TextAlign.center,
+        body: SafeArea(
+          child: Column(
+            children: [
+              _DetailTitleBar(title: conversation.title),
+              const Expanded(
+                child: Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(24),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.history_rounded, size: 44),
+                        SizedBox(height: 12),
+                        Text(
+                          'Esta conversaci\u00f3n fue guardada con una versi\u00f3n anterior.',
+                          textAlign: TextAlign.center,
+                        ),
+                        SizedBox(height: 8),
+                        Text(
+                          'El historial completo de chat, sugerencias y transcripci\u00f3n no estaba disponible en ese momento.',
+                          textAlign: TextAlign.center,
+                        ),
+                      ],
+                    ),
+                  ),
                 ),
-                SizedBox(height: 8),
-                Text(
-                  'El historial completo de chat, sugerencias y transcripci\u00f3n no estaba disponible en ese momento.',
-                  textAlign: TextAlign.center,
-                ),
-              ],
-            ),
+              ),
+            ],
           ),
         ),
       );
@@ -43,23 +52,123 @@ class ConversationDetailPage extends StatelessWidget {
     return DefaultTabController(
       length: 3,
       child: Scaffold(
-        appBar: AppBar(
-          title: Text(conversation.title),
-          bottom: const TabBar(
-            tabs: [
-              Tab(text: 'Chat'),
-              Tab(text: 'Sugerencias'),
-              Tab(text: 'Transcripcion'),
+        body: SafeArea(
+          child: Column(
+            children: [
+              _DetailTitleBar(title: conversation.title),
+              const Material(
+                child: TabBar(
+                  tabs: [
+                    Tab(text: 'Chat'),
+                    Tab(text: 'Sugerencias'),
+                    Tab(text: 'Transcripcion'),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: TabBarView(
+                  children: [
+                    _ChatTab(messages: conversation.messages),
+                    _BulletListTab(items: conversation.suggestions),
+                    _TranscriptTab(items: conversation.transcripts),
+                  ],
+                ),
+              ),
             ],
           ),
         ),
-        body: TabBarView(
-          children: [
-            _ChatTab(messages: conversation.messages),
-            _BulletListTab(items: conversation.suggestions),
-            _TranscriptTab(items: conversation.transcripts),
-          ],
-        ),
+      ),
+    );
+  }
+}
+
+class _DetailTitleBar extends StatelessWidget {
+  const _DetailTitleBar({required this.title});
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    Future<void> goBackToHome() async {
+      if (Navigator.of(context).canPop()) {
+        await Navigator.of(context).maybePop();
+      }
+    }
+
+    return SizedBox(
+      height: 38,
+      child: Row(
+        children: [
+          _DetailWindowButton(
+            icon: Icons.arrow_back_rounded,
+            tooltip: 'Volver',
+            onPressed: goBackToHome,
+          ),
+          Expanded(
+            child: DragToMoveArea(
+              child: Container(
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Text(
+                  title,
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(fontWeight: FontWeight.w600),
+                ),
+              ),
+            ),
+          ),
+          _DetailWindowButton(
+            icon: Icons.remove_rounded,
+            tooltip: 'Minimizar',
+            onPressed: () async => windowManager.minimize(),
+          ),
+          _DetailWindowButton(
+            icon: Icons.crop_square_rounded,
+            tooltip: 'Maximizar',
+            onPressed: () async {
+              final isMaximized = await windowManager.isMaximized();
+              if (isMaximized) {
+                await windowManager.unmaximize();
+              } else {
+                await windowManager.maximize();
+              }
+            },
+          ),
+          _DetailWindowButton(
+            icon: Icons.close_rounded,
+            tooltip: 'Cerrar y volver',
+            onPressed: goBackToHome,
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DetailWindowButton extends StatelessWidget {
+  const _DetailWindowButton({
+    required this.icon,
+    required this.tooltip,
+    required this.onPressed,
+  });
+
+  final IconData icon;
+  final String tooltip;
+  final VoidCallback onPressed;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 40,
+      height: 32,
+      child: IconButton(
+        iconSize: 16,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        onPressed: onPressed,
+        tooltip: tooltip,
+        icon: Icon(icon),
       ),
     );
   }
@@ -79,8 +188,7 @@ class _ChatTab extends StatelessWidget {
         final item = messages[index];
         final isAssistant = item.role == 'assistant';
         return Align(
-          alignment:
-              isAssistant ? Alignment.centerLeft : Alignment.centerRight,
+          alignment: isAssistant ? Alignment.centerLeft : Alignment.centerRight,
           child: Container(
             margin: const EdgeInsets.symmetric(vertical: 4),
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),

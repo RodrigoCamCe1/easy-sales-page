@@ -2,6 +2,10 @@
 #include <flutter/flutter_view_controller.h>
 #include <windows.h>
 
+#include <desktop_multi_window/desktop_multi_window_plugin.h>
+#include <screen_retriever/screen_retriever_plugin.h>
+#include <window_manager/window_manager_plugin.h>
+
 #include "flutter_window.h"
 #include "utils.h"
 
@@ -23,6 +27,16 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
       GetCommandLineArguments();
 
   project.set_dart_entrypoint_arguments(std::move(command_line_arguments));
+
+  DesktopMultiWindowSetWindowCreatedCallback([](void* controller) {
+    auto* flutter_view_controller =
+        reinterpret_cast<flutter::FlutterViewController*>(controller);
+    auto* registry = flutter_view_controller->engine();
+    ScreenRetrieverPluginRegisterWithRegistrar(
+        registry->GetRegistrarForPlugin("ScreenRetrieverPlugin"));
+    WindowManagerPluginRegisterWithRegistrar(
+        registry->GetRegistrarForPlugin("WindowManagerPlugin"));
+  });
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);

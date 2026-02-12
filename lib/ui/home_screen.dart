@@ -251,11 +251,14 @@ class _HomeScreenState extends State<HomeScreen> {
     final view = WidgetsBinding.instance.platformDispatcher.views.first;
     final screenWidth = view.physicalSize.width;
     final screenHeight = view.physicalSize.height;
+    const topOffset = 28.0;
     final window = await DesktopMultiWindow.createWindow(jsonEncode({
       'type': 'bar',
     }));
     window
-      ..setFrame(Rect.fromLTWH(0, 0, screenWidth, screenHeight))
+      ..setFrame(
+        Rect.fromLTWH(0, topOffset, screenWidth, screenHeight - topOffset),
+      )
       ..setTitle('AsesorIA')
       ..show();
     _barWindow = window;
@@ -307,6 +310,12 @@ class _HomeScreenState extends State<HomeScreen> {
         child: SafeArea(
           child: Column(
             children: [
+              _FramelessTitleBar(
+                title: 'AsesorIA',
+                onClose: () async {
+                  await windowManager.close();
+                },
+              ),
               Padding(
                 padding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
                 child: Row(
@@ -949,6 +958,93 @@ class _NoFilteredResults extends StatelessWidget {
             textAlign: TextAlign.center,
           ),
         ],
+      ),
+    );
+  }
+}
+
+class _FramelessTitleBar extends StatelessWidget {
+  const _FramelessTitleBar({
+    required this.title,
+    required this.onClose,
+  });
+
+  final String title;
+  final VoidCallback onClose;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      height: 38,
+      child: Row(
+        children: [
+          Expanded(
+            child: DragToMoveArea(
+              child: Container(
+                alignment: Alignment.centerLeft,
+                padding: const EdgeInsets.symmetric(horizontal: 14),
+                child: Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white70,
+                    fontSize: 12,
+                    fontWeight: FontWeight.w600,
+                  ),
+                ),
+              ),
+            ),
+          ),
+          _TitleButton(
+            icon: Icons.remove_rounded,
+            onPressed: () async => windowManager.minimize(),
+            tooltip: 'Minimizar',
+          ),
+          _TitleButton(
+            icon: Icons.crop_square_rounded,
+            onPressed: () async {
+              final isMaximized = await windowManager.isMaximized();
+              if (isMaximized) {
+                await windowManager.unmaximize();
+              } else {
+                await windowManager.maximize();
+              }
+            },
+            tooltip: 'Maximizar',
+          ),
+          _TitleButton(
+            icon: Icons.close_rounded,
+            onPressed: onClose,
+            tooltip: 'Cerrar',
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _TitleButton extends StatelessWidget {
+  const _TitleButton({
+    required this.icon,
+    required this.onPressed,
+    required this.tooltip,
+  });
+
+  final IconData icon;
+  final VoidCallback onPressed;
+  final String tooltip;
+
+  @override
+  Widget build(BuildContext context) {
+    return SizedBox(
+      width: 40,
+      height: 32,
+      child: IconButton(
+        iconSize: 16,
+        padding: EdgeInsets.zero,
+        visualDensity: VisualDensity.compact,
+        onPressed: onPressed,
+        tooltip: tooltip,
+        icon: Icon(icon, color: Colors.white70),
       ),
     );
   }

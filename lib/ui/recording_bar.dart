@@ -7,6 +7,7 @@ import 'dart:typed_data';
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_audio_capture/flutter_audio_capture.dart';
+import 'package:window_manager/window_manager.dart';
 
 import '../core/app_config.dart';
 import '../models/conversation.dart';
@@ -178,6 +179,9 @@ class _RecordingBarState extends State<RecordingBar> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      _configureFramelessWindow();
+    });
 
     _promptOverride = systemPrompt;
     _micMixEnabled = _windowsMicAvailable;
@@ -203,6 +207,22 @@ class _RecordingBarState extends State<RecordingBar> {
 
       return null;
     });
+  }
+
+  Future<void> _configureFramelessWindow() async {
+    for (var attempt = 0; attempt < 4; attempt++) {
+      try {
+        await windowManager.ensureInitialized();
+        await windowManager.setAsFrameless();
+        return;
+      } catch (error) {
+        if (attempt == 3) {
+          debugPrint('RecordingBar frameless setup failed: $error');
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 120));
+      }
+    }
   }
 
   Future<void> _notifyBarOpened() async {
@@ -490,13 +510,16 @@ class _RecordingBarState extends State<RecordingBar> {
     final view = WidgetsBinding.instance.platformDispatcher.views.first;
     final screenWidth = view.physicalSize.width / view.devicePixelRatio;
     final screenHeight = view.physicalSize.height / view.devicePixelRatio;
+    const topOffset = 28.0;
     final window = await DesktopMultiWindow.createWindow(jsonEncode({
       'type': 'settings',
       'mainWindowId': 0,
       'prompt': _promptOverride,
     }));
     window
-      ..setFrame(Rect.fromLTWH(0, 0, screenWidth, screenHeight))
+      ..setFrame(
+        Rect.fromLTWH(0, topOffset, screenWidth, screenHeight - topOffset),
+      )
       ..setTitle('Configuracion')
       ..show();
   }
@@ -1904,7 +1927,6 @@ class _RecordingBarState extends State<RecordingBar> {
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
                       Row(
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Row(
                             children: [
@@ -1926,6 +1948,24 @@ class _RecordingBarState extends State<RecordingBar> {
                                 _openSettings,
                               ),
                             ],
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: DragToMoveArea(
+                              child: Container(
+                                height: 28,
+                                alignment: Alignment.centerLeft,
+                                padding:
+                                    const EdgeInsets.symmetric(horizontal: 8),
+                                child: Text(
+                                  'AsesorIA',
+                                  style: textTheme.labelSmall?.copyWith(
+                                    color: colorScheme.onSurfaceVariant,
+                                    fontWeight: FontWeight.w600,
+                                  ),
+                                ),
+                              ),
+                            ),
                           ),
                           Row(
                             children: [

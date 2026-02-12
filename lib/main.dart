@@ -48,80 +48,78 @@ Future<void> main(List<String> args) async {
   // ============================
   // SUBWINDOW (desktop_multi_window)
   // ============================
- if (args.isNotEmpty) {
-  // ignore: avoid_print
-  print('[BOOT] args=$args');
+  if (args.isNotEmpty) {
+    // ignore: avoid_print
+    print('[BOOT] args=$args');
 
-  // 1) Detecta windowId: primer token numérico
-  int windowId = 0;
-  for (final a in args) {
-    final n = int.tryParse(a);
-    if (n != null) {
-      windowId = n;
-      break;
-    }
-  }
-
-  // 2) Detecta payload JSON: primer token que “parece JSON”
-  String raw = '';
-  for (final a in args) {
-    final t = a.toString().trim();
-    if (t.startsWith('{') || t.contains('"type"') || t.contains("'type'")) {
-      raw = t;
-      break;
-    }
-  }
-
-  // Debug
-  // ignore: avoid_print
-  print('[SUBWINDOW] windowId=$windowId raw=$raw');
-
-  Map<String, dynamic> arguments = {};
-  dynamic decoded;
-
-  if (raw.isNotEmpty) {
-    try {
-      decoded = jsonDecode(raw);
-    } catch (_) {
-      try {
-        decoded = jsonDecode(raw.replaceAll("'", '"'));
-      } catch (_) {
-        decoded = null;
+    // 1) Detecta windowId: primer token numérico
+    int windowId = 0;
+    for (final a in args) {
+      final n = int.tryParse(a);
+      if (n != null) {
+        windowId = n;
+        break;
       }
     }
 
-    if (decoded is String) {
+    // 2) Detecta payload JSON: primer token que “parece JSON”
+    String raw = '';
+    for (final a in args) {
+      final t = a.toString().trim();
+      if (t.startsWith('{') || t.contains('"type"') || t.contains("'type'")) {
+        raw = t;
+        break;
+      }
+    }
+
+    // Debug
+    // ignore: avoid_print
+    print('[SUBWINDOW] windowId=$windowId raw=$raw');
+
+    Map<String, dynamic> arguments = {};
+    dynamic decoded;
+
+    if (raw.isNotEmpty) {
       try {
-        decoded = jsonDecode(decoded);
-      } catch (_) {}
+        decoded = jsonDecode(raw);
+      } catch (_) {
+        try {
+          decoded = jsonDecode(raw.replaceAll("'", '"'));
+        } catch (_) {
+          decoded = null;
+        }
+      }
+
+      if (decoded is String) {
+        try {
+          decoded = jsonDecode(decoded);
+        } catch (_) {}
+      }
+
+      if (decoded is Map) {
+        arguments = Map<String, dynamic>.from(decoded);
+      }
     }
 
-    if (decoded is Map) {
-      arguments = Map<String, dynamic>.from(decoded);
+    final type = (arguments['type'] as String?)?.toLowerCase();
+
+    // ignore: avoid_print
+    print('[SUBWINDOW] parsed type=$type args=$arguments');
+
+    // ✅ Regla: si explícitamente dice settings => settings
+    if (type == 'settings') {
+      runApp(SettingsWindowApp(
+        windowId: windowId,
+        mainWindowId: arguments['mainWindowId'] as int? ?? 0,
+        initialPrompt: arguments['prompt'] as String? ?? systemPrompt,
+      ));
+      return;
     }
-  }
 
-  final type = (arguments['type'] as String?)?.toLowerCase();
-
-  // ignore: avoid_print
-  print('[SUBWINDOW] parsed type=$type args=$arguments');
-
-  // ✅ Regla: si explícitamente dice settings => settings
-  if (type == 'settings') {
-    runApp(SettingsWindowApp(
-      windowId: windowId,
-      mainWindowId: arguments['mainWindowId'] as int? ?? 0,
-      initialPrompt: arguments['prompt'] as String? ?? systemPrompt,
-    ));
+    // ✅ En cualquier otro caso (incluye vacío) => BAR
+    runApp(const RecordingBarApp());
     return;
   }
-
-  // ✅ En cualquier otro caso (incluye vacío) => BAR
-  runApp(const RecordingBarApp());
-  return;
-}
-
-
 
   // ============================
   // MAIN WINDOW (window_manager)
@@ -135,10 +133,11 @@ Future<void> main(List<String> args) async {
     minimumSize: const Size(900, 600),
     center: true,
     backgroundColor: Colors.transparent,
-    titleBarStyle: TitleBarStyle.normal,
+    titleBarStyle: TitleBarStyle.hidden,
   );
 
   windowManager.waitUntilReadyToShow(windowOptions, () async {
+    await windowManager.setAsFrameless();
     await windowManager.show();
     await windowManager.focus();
   });
