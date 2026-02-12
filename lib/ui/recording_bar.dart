@@ -67,13 +67,13 @@ class _RecordingBarState extends State<RecordingBar> {
   OpenAIRealtimeClient? _openAIClientMic;
   OpenAIRealtimeClient? _openAIClientSystem;
 
-  // ✅ Chat ahora es lista de mensajes (user/assistant)
+  // âœ… Chat ahora es lista de mensajes (user/assistant)
   final List<_ChatMessage> _chatResponses = [];
 
   final List<String> _suggestions = [];
   String _currentResponse = '';
 
-  // ✅ Transcripción separada (no debe contaminar Chat/Sugerencias)
+  // âœ… TranscripciÃ³n separada (no debe contaminar Chat/Sugerencias)
   final List<String> _transcripts = [];
   // buffers separados para que no se mezclen
   String _currentTranscriptSys = '';
@@ -127,7 +127,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
   bool _isRealBarWindow() {
     // La barra solo existe cuando fue creada con type=bar
-    // Settings nunca debería ejecutar esto
+    // Settings nunca deberÃ­a ejecutar esto
     return true;
   }
 
@@ -187,7 +187,7 @@ class _RecordingBarState extends State<RecordingBar> {
     _micMixEnabled = _windowsMicAvailable;
     _loadPromptFromFile();
 
-    // ✅ Esto siempre debe ejecutarse SOLO en la ventana BAR
+    // âœ… Esto siempre debe ejecutarse SOLO en la ventana BAR
     _notifyBarOpened();
 
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
@@ -254,7 +254,7 @@ class _RecordingBarState extends State<RecordingBar> {
     _openAIClientMic = null;
     _openAIClientSystem = null;
 
-    // ✅ limpia timers UI transcript
+    // âœ… limpia timers UI transcript
     _uiTranscriptIdleTimer?.cancel();
     _uiTranscriptIdleTimer = null;
     _queuedResponseDelayTimer?.cancel();
@@ -409,7 +409,7 @@ class _RecordingBarState extends State<RecordingBar> {
       return;
     }
 
-    // ✅ Muestra el mensaje del usuario como burbuja.
+    // âœ… Muestra el mensaje del usuario como burbuja.
     setState(() {
       _chatResponses.add(_ChatMessage(role: 'user', text: prompt));
     });
@@ -447,7 +447,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
     _manualPromptController.clear();
 
-    // ✅ por si venía una transcripción abierta, cerramos líneas antes de responder
+    // âœ… por si venÃ­a una transcripciÃ³n abierta, cerramos lÃ­neas antes de responder
     _appendTranscriptDelta('\n', source: 'mic');
 
     await _openAIClientMic?.requestResponse(
@@ -466,7 +466,7 @@ class _RecordingBarState extends State<RecordingBar> {
     _silenceAutoStopTimer?.cancel();
     _silenceAutoStopTimer = null;
 
-    // Cierra cualquier línea abierta antes de detener captura.
+    // Cierra cualquier lÃ­nea abierta antes de detener captura.
     _appendTranscriptDelta('\n', source: 'sys');
     _appendTranscriptDelta('\n', source: 'mic');
 
@@ -479,7 +479,7 @@ class _RecordingBarState extends State<RecordingBar> {
       await _audioCapture.stop();
     }
 
-    // ✅ si queda audio pendiente, forzar commit
+    // âœ… si queda audio pendiente, forzar commit
     if (_pendingSystemBytes > 0) {
       await _openAIClientSystem?.commitBuffer();
       _pendingSystemBytes = 0;
@@ -525,12 +525,12 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   void _openMicPrivacySettings() {
-    _addLog('Abriendo configuracion de micrófono en Windows');
+    _addLog('Abriendo configuracion de micrÃ³fono en Windows');
     Process.start('cmd', ['/c', 'start', 'ms-settings:privacy-microphone']);
   }
 
   // ============================
-  // ✅ STREAMING
+  // âœ… STREAMING
   // ============================
 
   void _appendResponseDelta(String delta) {
@@ -547,12 +547,12 @@ class _RecordingBarState extends State<RecordingBar> {
         _streamingAssistantIndex = _chatResponses.length - 1;
       }
 
-      // ✅ Pintar SOLO chat válido (no preguntas sugeridas)
+      // âœ… Pintar SOLO chat vÃ¡lido (no preguntas sugeridas)
       _streamingAssistantText = _buildStreamingChatPreview(_currentResponse);
 
       final idx = _streamingAssistantIndex;
       if (idx != null && idx >= 0 && idx < _chatResponses.length) {
-        // Si todavía no hay nada “chat válido”, no muestres basura
+        // Si todavÃ­a no hay nada â€œchat vÃ¡lidoâ€, no muestres basura
         final visible = _streamingAssistantText.trim();
         _chatResponses[idx] = _ChatMessage(
             role: 'assistant', text: visible.isEmpty ? '...' : visible);
@@ -567,10 +567,10 @@ class _RecordingBarState extends State<RecordingBar> {
 
     final text = _extractResponseText(raw);
 
-    // 1) Normaliza saltos de línea y corta por líneas
+    // 1) Normaliza saltos de lÃ­nea y corta por lÃ­neas
     final lines = text.split('\n');
 
-    // 2) Quedate solo con líneas que sean “CHAT prefix”
+    // 2) Quedate solo con lÃ­neas que sean â€œCHAT prefixâ€
     final kept = <String>[];
     for (final line in lines) {
       final t = line.trim();
@@ -579,7 +579,7 @@ class _RecordingBarState extends State<RecordingBar> {
       // Nunca mostrar preguntas sugeridas en el chat en vivo
       if (t.toLowerCase().startsWith(_suggestionPrefix.toLowerCase())) continue;
 
-      final n = _normalizeChatLine(t); // devuelve '' si no es prefijo válido
+      final n = _normalizeChatLine(t); // devuelve '' si no es prefijo vÃ¡lido
       if (n.isNotEmpty) kept.add(n);
     }
 
@@ -590,14 +590,14 @@ class _RecordingBarState extends State<RecordingBar> {
       if (seen.add(l)) out.add(l);
     }
 
-    // 4) Mostramos máximo 4 líneas (tu regla)
+    // 4) Mostramos mÃ¡ximo 4 lÃ­neas (tu regla)
     if (out.length > 4) {
       return out.take(4).join('\n');
     }
     return out.join('\n');
   }
 
-  /// ✅ Llama con text normal.
+  /// âœ… Llama con text normal.
   /// Opcional: source = 'sys' o 'mic'
   void _appendTranscriptDelta(String text, {String source = 'sys'}) {
     if (text.isEmpty) return;
@@ -609,7 +609,7 @@ class _RecordingBarState extends State<RecordingBar> {
     source = source.toLowerCase().trim();
     if (source != 'mic') source = 'sys';
 
-    // Si llega un "\n" explícito, solo cerramos la línea de la fuente correspondiente
+    // Si llega un "\n" explÃ­cito, solo cerramos la lÃ­nea de la fuente correspondiente
     void flushOneLine({required bool isMic}) {
       final buf = isMic ? _currentTranscriptMic : _currentTranscriptSys;
       final chunk = buf.trim();
@@ -618,7 +618,7 @@ class _RecordingBarState extends State<RecordingBar> {
       final cleaned = _cleanTranscriptChunk(chunk);
       if (cleaned != null && cleaned.trim().isNotEmpty) {
         final normalized = cleaned.trim();
-        final tagged = isMic ? '🎤 $cleaned' : '🖥️ $cleaned';
+        final tagged = isMic ? 'ðŸŽ¤ $cleaned' : 'ðŸ–¥ï¸ $cleaned';
 
         // dedupe por fuente
         if (isMic) {
@@ -657,7 +657,7 @@ class _RecordingBarState extends State<RecordingBar> {
       }
     }
 
-    // ⏱️ Idle flush: si no llegan más deltas, cerramos línea automáticamente
+    // â±ï¸ Idle flush: si no llegan mÃ¡s deltas, cerramos lÃ­nea automÃ¡ticamente
     void bumpIdleFlush({required bool isMic, int ms = _transcriptIdleFlushMs}) {
       _uiTranscriptIdleTimer?.cancel();
       _uiTranscriptIdleTimer = Timer(Duration(milliseconds: ms), () {
@@ -683,7 +683,7 @@ class _RecordingBarState extends State<RecordingBar> {
         }
       }
 
-      // 2) Si el backend manda "\n" dentro del texto, partimos por líneas
+      // 2) Si el backend manda "\n" dentro del texto, partimos por lÃ­neas
       String working = isMic ? _currentTranscriptMic : _currentTranscriptSys;
 
       while (working.contains('\n')) {
@@ -699,11 +699,11 @@ class _RecordingBarState extends State<RecordingBar> {
 
         flushOneLine(isMic: isMic);
 
-        // continúa con el resto
+        // continÃºa con el resto
         working = working.substring(idx + 1);
       }
 
-      // guarda el residual que quedó sin \n
+      // guarda el residual que quedÃ³ sin \n
       if (isMic) {
         _currentTranscriptMic = working;
       } else {
@@ -711,7 +711,7 @@ class _RecordingBarState extends State<RecordingBar> {
       }
     });
 
-    // 3) Si no fue "\n", programamos cierre automático por silencio de transcript
+    // 3) Si no fue "\n", programamos cierre automÃ¡tico por silencio de transcript
     if (text != '\n') {
       bumpIdleFlush(isMic: isMic);
     }
@@ -723,13 +723,13 @@ class _RecordingBarState extends State<RecordingBar> {
     if (_transcripts.isEmpty) return false;
     final lastIndex = _transcripts.length - 1;
     final last = _transcripts[lastIndex].trim();
-    if (!last.startsWith('🎤 ')) return false;
+    if (!last.startsWith('ðŸŽ¤ ')) return false;
     if (_lastMicTranscriptAt == null ||
         now.difference(_lastMicTranscriptAt!) > _micTranscriptMergeWindow) {
       return false;
     }
 
-    final previous = last.replaceFirst(RegExp(r'^🎤\s*'), '').trim();
+    final previous = last.replaceFirst(RegExp(r'^ðŸŽ¤\s*'), '').trim();
     if (previous.isEmpty) return false;
 
     final prevKey = previous.toLowerCase();
@@ -741,7 +741,7 @@ class _RecordingBarState extends State<RecordingBar> {
     final merged = nextKey.contains(prevKey)
         ? cleaned.trim()
         : '$previous ${cleaned.trim()}';
-    _transcripts[lastIndex] = '🎤 $merged';
+    _transcripts[lastIndex] = 'ðŸŽ¤ $merged';
     return true;
   }
 
@@ -750,7 +750,7 @@ class _RecordingBarState extends State<RecordingBar> {
     for (final line in chatBlock.split('\n')) {
       final t = line.trim();
       if (t.isEmpty) continue;
-      final cleaned = t.replaceFirst(RegExp(r'^[-•]\s*'), '').trim();
+      final cleaned = t.replaceFirst(RegExp(r'^[-â€¢]\s*'), '').trim();
       if (cleaned.isNotEmpty) out.add(cleaned);
     }
     return out;
@@ -760,7 +760,7 @@ class _RecordingBarState extends State<RecordingBar> {
     final t = text.trim();
     if (t.isEmpty) return;
 
-    // ✅ anti-duplicado consecutivo
+    // âœ… anti-duplicado consecutivo
     if (_chatResponses.isNotEmpty &&
         _chatResponses.last.role == 'assistant' &&
         _chatResponses.last.text.trim() == t) {
@@ -823,7 +823,7 @@ class _RecordingBarState extends State<RecordingBar> {
       final idx = _streamingAssistantIndex;
 
       // Si NO pudimos parsear chatLines, NO borres la burbuja streaming:
-      // úsala como mensaje final (para que no “desaparezca”)
+      // Ãºsala como mensaje final (para que no â€œdesaparezcaâ€)
       if (finalLines.isEmpty) {
         if (idx != null && idx >= 0 && idx < _chatResponses.length) {
           final fallback = _streamingAssistantText.trim();
@@ -833,7 +833,7 @@ class _RecordingBarState extends State<RecordingBar> {
           }
         }
       } else {
-        // Si SÍ hay chatLines, reemplaza la burbuja streaming por líneas finales
+        // Si SÃ hay chatLines, reemplaza la burbuja streaming por lÃ­neas finales
         if (idx != null && idx >= 0 && idx < _chatResponses.length) {
           _chatResponses.removeAt(idx);
         }
@@ -903,7 +903,7 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   // ============================
-  // ✅ SAVE CONVERSATION
+  // âœ… SAVE CONVERSATION
   // ============================
 
   Future<void> _maybeSaveConversation() async {
@@ -946,20 +946,20 @@ class _RecordingBarState extends State<RecordingBar> {
 
   String _buildTitle(String text) {
     final trimmed = text.trim();
-    if (trimmed.isEmpty) return 'Conversación';
+    if (trimmed.isEmpty) return 'ConversaciÃ³n';
     final words = trimmed.split(RegExp(r'\s+'));
     final titleWords = words.take(6).join(' ');
     return titleWords.length > 42
-        ? '${titleWords.substring(0, 42)}…'
+        ? '${titleWords.substring(0, 42)}â€¦'
         : titleWords;
   }
   // ============================
-// ✅ NORMALIZADORES (anti-duplicados / limpieza)
+// âœ… NORMALIZADORES (anti-duplicados / limpieza)
 // ============================
 
   static const List<String> _chatPrefixes = [
     'Respuesta sugerida:',
-    'Objeción detectada:',
+    'ObjeciÃ³n detectada:',
     'Objecion detectada:', // por si el modelo no pone tilde
     'Momento de cierre:',
   ];
@@ -979,7 +979,7 @@ class _RecordingBarState extends State<RecordingBar> {
         .trim();
     if (t.isEmpty) return '';
 
-    // Solo permitimos líneas que empiecen con prefijos de CHAT
+    // Solo permitimos lÃ­neas que empiecen con prefijos de CHAT
     final prefix = _chatPrefixes.firstWhere(
       (p) => t.toLowerCase().startsWith(p.toLowerCase()),
       orElse: () => '',
@@ -1003,7 +1003,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
   String _normalizeSuggestion(String s) {
     var t = s.trim();
-    t = t.replaceAll('👉', '').replaceAll('💡', '').trim();
+    t = t.replaceAll('ðŸ‘‰', '').replaceAll('ðŸ’¡', '').trim();
 
     // Si viene "Pregunta sugerida: ..." quedarnos solo con el valor
     final lower = t.toLowerCase();
@@ -1022,21 +1022,21 @@ class _RecordingBarState extends State<RecordingBar> {
     var s = t.trim();
     if (s.isEmpty) return s;
 
-    // Normalización ligera para comparar (sin destruir el original)
+    // NormalizaciÃ³n ligera para comparar (sin destruir el original)
     String norm(String x) =>
         x.toLowerCase().replaceAll(RegExp(r'\s+'), ' ').trim();
 
-    // Si el texto es literalmente "A A" separado por espacio / puntuación
+    // Si el texto es literalmente "A A" separado por espacio / puntuaciÃ³n
     // intentamos encontrar el mejor corte posible.
     final tokens = s.split(RegExp(r'\s+'));
     if (tokens.length < 2) return s;
 
-    // Probamos varios tamaños de bloque (desde 1 token hasta la mitad)
+    // Probamos varios tamaÃ±os de bloque (desde 1 token hasta la mitad)
     final maxBlock = (tokens.length / 2).floor();
     final normTokens = tokens.map(norm).toList();
 
     for (int block = 1; block <= maxBlock; block++) {
-      // Compara bloque inicial vs bloque siguiente del mismo tamaño
+      // Compara bloque inicial vs bloque siguiente del mismo tamaÃ±o
       bool equal = true;
       for (int i = 0; i < block; i++) {
         if (normTokens[i] != normTokens[i + block]) {
@@ -1059,24 +1059,24 @@ class _RecordingBarState extends State<RecordingBar> {
 
     final lower = t.toLowerCase();
 
-    // Basura típica que se cuela en transcript
+    // Basura tÃ­pica que se cuela en transcript
     final looksLikeContext = lower == '###' ||
         lower.startsWith('context:') ||
         lower.startsWith('###context') ||
         lower == 'context';
 
     final looksLikeInstruction =
-        lower.contains('transcribe únicamente en español') ||
+        lower.contains('transcribe Ãºnicamente en espaÃ±ol') ||
             lower.contains('transcribe unicamente en espanol');
 
     if (looksLikeContext || looksLikeInstruction) return null;
 
-    // Colapsa repetición inmediata de frases: "Gracias. Gracias."
+    // Colapsa repeticiÃ³n inmediata de frases: "Gracias. Gracias."
     t = t.replaceAllMapped(
       RegExp(r'(\b\w+[.!?])\1+'),
       (m) => m.group(1)!,
     );
-    // Colapsa repetición inmediata (tu helper)
+    // Colapsa repeticiÃ³n inmediata (tu helper)
     t = _collapseImmediateRepeat(t);
 
     // Normaliza espacios
@@ -1086,7 +1086,7 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   // ============================
-  // ✅ PARSE OUTPUT
+  // âœ… PARSE OUTPUT
   // ============================
 
   String _extractResponseText(String raw) {
@@ -1155,7 +1155,7 @@ class _RecordingBarState extends State<RecordingBar> {
     return cleaned;
   }
 
-// Esto queda para el “modo fallback” (cuando NO hay secciones)
+// Esto queda para el â€œmodo fallbackâ€ (cuando NO hay secciones)
   String _cleanLooseText(String raw) {
     var cleaned = _cleanAssistantText(raw);
     if (cleaned.isEmpty) return '';
@@ -1172,20 +1172,20 @@ class _RecordingBarState extends State<RecordingBar> {
     if (t.contains('{') || t.toLowerCase().contains('tool_calls')) return null;
 
     // normaliza bullets/emojis
-    t = t.replaceAll(RegExp(r'^[•\-\*\d\)\.]+\s*'), '').trim();
+    t = t.replaceAll(RegExp(r'^[â€¢\-\*\d\)\.]+\s*'), '').trim();
     t = t
-        .replaceAll('👉', '')
-        .replaceAll('💡', '')
-        .replaceAll('⚠️', '')
-        .replaceAll('✅', '')
+        .replaceAll('ðŸ‘‰', '')
+        .replaceAll('ðŸ’¡', '')
+        .replaceAll('âš ï¸', '')
+        .replaceAll('âœ…', '')
         .trim();
 
     // SOLO acepta preguntas con el prefijo exacto
     if (t.startsWith(_suggestionPrefix)) {
       var value = t.substring(_suggestionPrefix.length).trim();
       value = value
-          .replaceAll('“', '')
-          .replaceAll('”', '')
+          .replaceAll('â€œ', '')
+          .replaceAll('â€', '')
           .replaceAll('"', '')
           .trim();
       if (value.isEmpty) return null;
@@ -1208,12 +1208,12 @@ class _RecordingBarState extends State<RecordingBar> {
         continue;
       }
 
-      // ❌ Nunca dejar pasar preguntas en CHAT
+      // âŒ Nunca dejar pasar preguntas en CHAT
       if (trimmed.startsWith('Pregunta sugerida:')) {
         continue;
       }
 
-      // ✅ Solo líneas de chat válidas
+      // âœ… Solo lÃ­neas de chat vÃ¡lidas
       for (final p in _chatPrefixes) {
         if (trimmed.startsWith(p)) {
           kept.add(trimmed);
@@ -1245,7 +1245,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
     t = t.replaceAllMapped(
       RegExp(
-        r'(CHAT\s*:)\s*(Respuesta sugerida:|Objeción detectada:|Objecion detectada:|Momento de cierre:)',
+        r'(CHAT\s*:)\s*(Respuesta sugerida:|ObjeciÃ³n detectada:|Objecion detectada:|Momento de cierre:)',
         caseSensitive: false,
       ),
       (m) => '${m.group(1)}\n${m.group(2)}',
@@ -1343,7 +1343,7 @@ class _RecordingBarState extends State<RecordingBar> {
       }
     }
 
-    // ---- CHAT: solo prefijos válidos
+    // ---- CHAT: solo prefijos vÃ¡lidos
     final chatOut = <String>[];
     for (final line in chatLinesRaw) {
       final t = line.trim();
@@ -1370,10 +1370,10 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   // ============================
-  // ✅ PROMPT (Opcion A incluida)
+  // âœ… PROMPT (Opcion A incluida)
   // ============================
 
-  // ✅ E) REEMPLAZA tu _buildChatInstructions por este (obliga 2–4 líneas en CHAT + 3 sugerencias)
+  // âœ… E) REEMPLAZA tu _buildChatInstructions por este (obliga 2â€“4 lÃ­neas en CHAT + 3 sugerencias)
   String _buildChatInstructions({String? userPrompt}) {
     final buffer = StringBuffer();
 
@@ -1384,14 +1384,14 @@ class _RecordingBarState extends State<RecordingBar> {
 
     buffer.writeln(
         'INSTRUCCION CRITICA: Todo lo que generes DEBE seguir el prompt anterior.');
-    buffer.writeln('Responde en español.');
+    buffer.writeln('Responde en espaÃ±ol.');
     buffer.writeln('Devuelve EXACTAMENTE dos secciones con estos encabezados:');
     buffer.writeln('CHAT:');
     buffer.writeln('- Devuelve de 2 a 4 mensajes cortos, UNO POR LINEA.');
     buffer.writeln(
         '- Cada linea DEBE iniciar exactamente con uno de estos prefijos:');
     buffer.writeln('      Respuesta sugerida: ...');
-    buffer.writeln('      Objeción detectada: ...');
+    buffer.writeln('      ObjeciÃ³n detectada: ...');
     buffer.writeln('      Momento de cierre: ...');
     buffer.writeln(
         '- No uses emojis. No uses JSON. No agregues texto extra fuera de CHAT/SUGERENCIAS.');
@@ -1425,20 +1425,28 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   List<_TranscriptEntry> _buildTranscriptEntries() {
-    final out = <_TranscriptEntry>[];
+    final committed = <_TranscriptEntry>[];
 
     for (final transcript in _transcripts) {
       final t = transcript.trim();
       if (t.isEmpty) continue;
 
-      if (t.startsWith('🎤 ')) {
-        out.add(_TranscriptEntry(text: t.substring(2).trim(), isMic: true));
-      } else if (t.startsWith('🖥️ ')) {
-        out.add(_TranscriptEntry(text: t.substring(3).trim(), isMic: false));
+      if (RegExp(r'^(🎤|ðŸŽ¤)\s*').hasMatch(t)) {
+        committed.add(_TranscriptEntry(
+          text: t.replaceFirst(RegExp(r'^(🎤|ðŸŽ¤)\s*'), '').trim(),
+          isMic: true,
+        ));
+      } else if (RegExp(r'^(🖥️|🖥|ðŸ–¥ï¸|ðŸ–¥)\s*').hasMatch(t)) {
+        committed.add(_TranscriptEntry(
+          text: t.replaceFirst(RegExp(r'^(🖥️|🖥|ðŸ–¥ï¸|ðŸ–¥)\s*'), '').trim(),
+          isMic: false,
+        ));
       } else {
-        out.add(_TranscriptEntry(text: t, isMic: false));
+        committed.add(_TranscriptEntry(text: t, isMic: false));
       }
     }
+
+    final out = _normalizeTranscriptEntries(committed);
 
     final currentSys = _currentTranscriptSys.trim();
     if (currentSys.isNotEmpty) {
@@ -1453,8 +1461,53 @@ class _RecordingBarState extends State<RecordingBar> {
     return out;
   }
 
+  List<_TranscriptEntry> _normalizeTranscriptEntries(
+    List<_TranscriptEntry> entries,
+  ) {
+    if (entries.length < 2) return List<_TranscriptEntry>.from(entries);
+    final ordered = List<_TranscriptEntry>.from(entries);
+
+    for (var i = 1; i < ordered.length - 1; i++) {
+      final prev = ordered[i - 1];
+      final current = ordered[i];
+      final next = ordered[i + 1];
+      if (prev.isMic != next.isMic) continue;
+      if (current.isMic == prev.isMic) continue;
+      if (!_isShortInterjection(current.text)) continue;
+
+      ordered.removeAt(i);
+      ordered.insert(i + 1, current);
+      i++;
+    }
+
+    final merged = <_TranscriptEntry>[];
+    for (final entry in ordered) {
+      if (merged.isEmpty) {
+        merged.add(entry);
+        continue;
+      }
+      final last = merged.last;
+      if (!last.pending && !entry.pending && last.isMic == entry.isMic) {
+        merged[merged.length - 1] = _TranscriptEntry(
+          text: '${last.text.trim()}\n${entry.text.trim()}'.trim(),
+          isMic: last.isMic,
+        );
+      } else {
+        merged.add(entry);
+      }
+    }
+
+    return merged;
+  }
+
+  bool _isShortInterjection(String text) {
+    final t = text.trim();
+    if (t.isEmpty) return true;
+    return _wordCount(t) <= 3 || t.length <= 18;
+  }
+
   // ============================
-  // ✅ AUDIO
+  // âœ… AUDIO
   // ============================
 
   void _appendAudio(Uint8List bytes) {
@@ -1494,7 +1547,7 @@ class _RecordingBarState extends State<RecordingBar> {
     final t = line.trim();
     if (t.isEmpty) return false;
     if (t.length < 3) return false;
-    return RegExp(r'[A-Za-z0-9ÁÉÍÓÚáéíóúÑñ]').hasMatch(t);
+    return RegExp(r'[A-Za-z0-9ÃÃ‰ÃÃ“ÃšÃ¡Ã©Ã­Ã³ÃºÃ‘Ã±]').hasMatch(t);
   }
 
   int _wordCount(String text) {
@@ -1556,7 +1609,7 @@ class _RecordingBarState extends State<RecordingBar> {
     final key = cleanedLine.toLowerCase();
     if (key.isEmpty) return;
 
-    // Evita re-disparar por la misma línea cerrada varias veces.
+    // Evita re-disparar por la misma lÃ­nea cerrada varias veces.
     if (_lastVoiceTriggerKey == key &&
         _lastVoiceTriggerAt != null &&
         now.difference(_lastVoiceTriggerAt!) < const Duration(seconds: 12)) {
@@ -2250,7 +2303,7 @@ class _TranscriptionPane extends StatelessWidget {
               ),
             ),
             child: Text(
-              item.text,
+              _fixMojibake(item.text),
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: colorScheme.onSurface,
                     fontStyle: item.pending ? FontStyle.italic : null,
@@ -2355,7 +2408,9 @@ class _SuggestionsListPane extends StatelessWidget {
         child: Padding(
           padding: const EdgeInsets.only(top: 2),
           child: Text(
-            'Aún no hay sugerencias.\nHabla o envía un prompt manual para generar preguntas.',
+            _fixMojibake(
+              'Aún no hay sugerencias.\nHabla o envía un prompt manual para generar preguntas.',
+            ),
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: colorScheme.onSurface,
                 ),
@@ -2384,7 +2439,7 @@ class _SuggestionsListPane extends StatelessWidget {
             ),
           ),
           child: Text(
-            '• $s',
+            _fixMojibake('• $s'),
             style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                   color: colorScheme.onSurface,
                 ),
@@ -2396,7 +2451,7 @@ class _SuggestionsListPane extends StatelessWidget {
 }
 
 // =======================
-// ✅ Chat: modelos y UI
+// âœ… Chat: modelos y UI
 // =======================
 
 class _TranscriptEntry {
@@ -2458,7 +2513,7 @@ class _ChatPane extends StatelessWidget {
 
         final role = isThinkingRow ? 'assistant' : messages[index].role;
         final text = isThinkingRow
-            ? 'Asistente está pensando...'
+            ? 'Asistente estÃ¡ pensando...'
             : messages[index].text.trim();
 
         final isAssistant = role == 'assistant';
@@ -2479,7 +2534,7 @@ class _ChatPane extends StatelessWidget {
               ),
             ),
             child: Text(
-              text,
+              _fixMojibake(text),
               style: Theme.of(context).textTheme.bodyMedium?.copyWith(
                     color: colorScheme.onSurface,
                     fontStyle:
@@ -2491,4 +2546,15 @@ class _ChatPane extends StatelessWidget {
       },
     );
   }
+}
+
+String _fixMojibake(String input) {
+  if (input.isEmpty) return input;
+  if (!RegExp(r'[ÃÂâð]').hasMatch(input)) return input;
+
+  try {
+    final fixed = utf8.decode(latin1.encode(input), allowMalformed: true);
+    if (fixed.isNotEmpty) return fixed;
+  } catch (_) {}
+  return input;
 }

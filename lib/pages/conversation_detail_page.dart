@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
@@ -235,7 +237,12 @@ class _TranscriptTab extends StatelessWidget {
   bool get _hasBubbleFormat {
     return items.any((line) {
       final t = line.trimLeft();
-      return t.startsWith('🎤 ') || t.startsWith('🖥️ ') || t.startsWith('🖥 ');
+      return t.startsWith('🎤 ') ||
+          t.startsWith('🖥️ ') ||
+          t.startsWith('🖥 ') ||
+          t.startsWith('ðŸŽ¤ ') ||
+          t.startsWith('ðŸ–¥ï¸ ') ||
+          t.startsWith('ðŸ–¥ ');
     });
   }
 
@@ -249,12 +256,13 @@ class _TranscriptTab extends StatelessWidget {
         .map(_TranscriptBubbleEntry.fromRaw)
         .where((e) => e.text.isNotEmpty)
         .toList();
+    final normalized = _normalizeEntries(entries);
 
     return ListView.builder(
       padding: const EdgeInsets.all(12),
-      itemCount: entries.length,
+      itemCount: normalized.length,
       itemBuilder: (context, index) {
-        final entry = entries[index];
+        final entry = normalized[index];
         final align =
             entry.isMic ? Alignment.centerRight : Alignment.centerLeft;
         final bgColor = entry.isMic
@@ -273,7 +281,7 @@ class _TranscriptTab extends StatelessWidget {
               borderRadius: BorderRadius.circular(14),
             ),
             child: Text(
-              entry.text,
+              _fixMojibake(entry.text),
               style: TextStyle(color: fgColor),
             ),
           ),
@@ -281,6 +289,61 @@ class _TranscriptTab extends StatelessWidget {
       },
     );
   }
+
+  List<_TranscriptBubbleEntry> _normalizeEntries(
+    List<_TranscriptBubbleEntry> source,
+  ) {
+    if (source.length < 2) return source;
+    final ordered = List<_TranscriptBubbleEntry>.from(source);
+
+    for (var i = 1; i < ordered.length - 1; i++) {
+      final prev = ordered[i - 1];
+      final current = ordered[i];
+      final next = ordered[i + 1];
+      if (prev.isMic != next.isMic) continue;
+      if (current.isMic == prev.isMic) continue;
+      if (!_isShortInterjection(current.text)) continue;
+
+      ordered.removeAt(i);
+      ordered.insert(i + 1, current);
+      i++;
+    }
+
+    final merged = <_TranscriptBubbleEntry>[];
+    for (final item in ordered) {
+      if (merged.isEmpty) {
+        merged.add(item);
+        continue;
+      }
+      final last = merged.last;
+      if (last.isMic == item.isMic) {
+        merged[merged.length - 1] = _TranscriptBubbleEntry(
+          text: '${last.text.trim()}\n${item.text.trim()}'.trim(),
+          isMic: last.isMic,
+        );
+      } else {
+        merged.add(item);
+      }
+    }
+
+    return merged;
+  }
+
+  bool _isShortInterjection(String text) {
+    final words = text.trim().split(RegExp(r'\s+')).where((w) => w.isNotEmpty);
+    return words.length <= 3 || text.trim().length <= 18;
+  }
+}
+
+String _fixMojibake(String input) {
+  if (input.isEmpty) return input;
+  if (!RegExp(r'[ÃÂâð]').hasMatch(input)) return input;
+
+  try {
+    final fixed = utf8.decode(latin1.encode(input), allowMalformed: true);
+    if (fixed.isNotEmpty) return fixed;
+  } catch (_) {}
+  return input;
 }
 
 class _TranscriptBubbleEntry {
@@ -291,21 +354,15 @@ class _TranscriptBubbleEntry {
 
   static _TranscriptBubbleEntry fromRaw(String raw) {
     final t = raw.trim();
-    if (t.startsWith('🎤 ')) {
+    if (RegExp(r'^(🎤|ðŸŽ¤)\s*').hasMatch(t)) {
       return _TranscriptBubbleEntry(
-        text: t.substring(2).trim(),
+        text: t.replaceFirst(RegExp(r'^(🎤|ðŸŽ¤)\s*'), '').trim(),
         isMic: true,
       );
     }
-    if (t.startsWith('🖥️ ')) {
+    if (RegExp(r'^(🖥️|🖥|ðŸ–¥ï¸|ðŸ–¥)\s*').hasMatch(t)) {
       return _TranscriptBubbleEntry(
-        text: t.substring(3).trim(),
-        isMic: false,
-      );
-    }
-    if (t.startsWith('🖥 ')) {
-      return _TranscriptBubbleEntry(
-        text: t.substring(2).trim(),
+        text: t.replaceFirst(RegExp(r'^(🖥️|🖥|ðŸ–¥ï¸|ðŸ–¥)\s*'), '').trim(),
         isMic: false,
       );
     }
