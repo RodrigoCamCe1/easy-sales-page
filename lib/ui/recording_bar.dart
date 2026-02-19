@@ -11,6 +11,7 @@ import 'package:window_manager/window_manager.dart';
 
 import '../core/app_config.dart';
 import '../models/conversation.dart';
+import '../services/agent_profile_store.dart';
 import '../services/conversation_store.dart';
 import '../services/openai_realtime_client.dart';
 
@@ -95,6 +96,8 @@ class _RecordingBarState extends State<RecordingBar> {
   bool _finalResponseQueued = false;
   String _queuedResponseSource = 'sys';
   String _queuedTranscriptKey = '';
+  int _assistantTurnSeq = 0;
+  int? _activeAssistantTurnId;
   DateTime? _lastVoiceTriggerAt;
   String _lastVoiceTriggerKey = '';
   int? _streamingAssistantIndex;
@@ -102,6 +105,8 @@ class _RecordingBarState extends State<RecordingBar> {
   bool _assistantStreamStarted = false;
   DateTime? _lastLevelLogAt;
   String _promptOverride = '';
+  String _activeAgentName = 'Personalizar tu agente';
+  String _activeAgentMode = 'custom';
   bool _micMixEnabled = false;
   bool _showSuggestions = false;
   bool _suggestionsSidebarOpen = true;
@@ -165,15 +170,17 @@ class _RecordingBarState extends State<RecordingBar> {
     });
   }
 
-  Future<void> _loadPromptFromFile() async {
-    if (!await promptFile.exists()) return;
-    final content = (await promptFile.readAsString()).trim();
-    if (content.isEmpty) return;
+  Future<void> _loadActiveAgent() async {
+    final active = await AgentProfileStore.instance.getActiveAgent();
     if (!mounted) return;
     setState(() {
-      _promptOverride = content;
+      _promptOverride = active.composedPrompt;
+      _activeAgentName = active.name;
+      _activeAgentMode = active.mode;
     });
-    _addLog('Prompt cargado desde ${promptFile.path}');
+    _openAIClientMic?.updateSessionInstructions(_promptOverride);
+    _openAIClientSystem?.updateSessionInstructions(_promptOverride);
+    _addLog('Agente activo: $_activeAgentName ($_activeAgentMode)');
   }
 
   @override
@@ -185,7 +192,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
     _promptOverride = systemPrompt;
     _micMixEnabled = _windowsMicAvailable;
-    _loadPromptFromFile();
+    _loadActiveAgent();
 
     // âœ… Esto siempre debe ejecutarse SOLO en la ventana BAR
     _notifyBarOpened();
@@ -194,8 +201,16 @@ class _RecordingBarState extends State<RecordingBar> {
       if (call.method == 'updatePrompt') {
         final args = call.arguments as Map?;
         final prompt = args?['prompt'] as String? ?? '';
+        final agentName = args?['agentName'] as String?;
+        final agentMode = args?['agentMode'] as String?;
         setState(() {
           _promptOverride = prompt.isEmpty ? systemPrompt : prompt;
+          if (agentName != null && agentName.trim().isNotEmpty) {
+            _activeAgentName = agentName.trim();
+          }
+          if (agentMode != null && agentMode.trim().isNotEmpty) {
+            _activeAgentMode = agentMode.trim();
+          }
         });
         _openAIClientMic?.updateSessionInstructions(_promptOverride);
         _openAIClientSystem?.updateSessionInstructions(_promptOverride);
@@ -239,7 +254,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
   Future<void> _startListening() async {
     if (_listening) return;
-    await _loadPromptFromFile();
+    await _loadActiveAgent();
 
     if (openAIKey.isEmpty) {
       setState(() {
@@ -280,6 +295,8 @@ class _RecordingBarState extends State<RecordingBar> {
     _finalResponseQueued = false;
     _queuedResponseSource = _systemOnlyMode ? 'sys' : 'mic';
     _queuedTranscriptKey = '';
+    _assistantTurnSeq = 0;
+    _activeAssistantTurnId = null;
     _lastVoiceTriggerAt = null;
     _lastVoiceTriggerKey = '';
 
@@ -343,11 +360,24 @@ class _RecordingBarState extends State<RecordingBar> {
       );
     }
 
-    await _openAIClientMic?.connect();
-    await _openAIClientSystem?.connect();
+    try {
+      await _openAIClientMic?.connect();
+      await _openAIClientSystem?.connect();
+    } catch (error) {
+      setState(() {
+        _listening = false;
+        _statusMessage = 'No se pudo conectar con OpenAI: $error';
+      });
+      _timer?.cancel();
+      _elapsed = Duration.zero;
+      return;
+    }
 
     setState(() {
       _listening = true;
+      _statusMessage = Platform.isWindows
+          ? 'Conectado a OpenAI. Escuchando audio del sistema...'
+          : 'Conectado a OpenAI. Escuchando microfono...';
     });
     _scheduleSilenceAutoStop();
 
@@ -374,6 +404,10 @@ class _RecordingBarState extends State<RecordingBar> {
           sampleRate: 16000,
           bufferSize: 3000,
         );
+        setState(() {
+          _statusMessage =
+              'AsesorIA iniciada: conectada a OpenAI. Ya puedes hablar.';
+        });
       } catch (error) {
         setState(() {
           _statusMessage = 'No se pudo iniciar la captura: $error';
@@ -397,7 +431,7 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   Future<void> _sendManualPrompt() async {
-    await _loadPromptFromFile();
+    await _loadActiveAgent();
     final prompt = _manualPromptController.text.trim();
     if (prompt.isEmpty) return;
 
@@ -443,6 +477,8 @@ class _RecordingBarState extends State<RecordingBar> {
       _statusMessage = 'Enviando prompt manual';
       _responseInFlight = true;
       _micResponseInFlight = true;
+      _assistantTurnSeq += 1;
+      _activeAssistantTurnId = _assistantTurnSeq;
     });
 
     _manualPromptController.clear();
@@ -481,13 +517,17 @@ class _RecordingBarState extends State<RecordingBar> {
 
     // âœ… si queda audio pendiente, forzar commit
     if (_pendingSystemBytes > 0) {
-      await _openAIClientSystem?.commitBuffer();
-      _pendingSystemBytes = 0;
+      final committed = await _openAIClientSystem?.commitBuffer() ?? false;
+      if (committed) {
+        _pendingSystemBytes = 0;
+      }
     }
 
     if (_pendingMicBytes > 0) {
-      await _openAIClientMic?.commitBuffer();
-      _pendingMicBytes = 0;
+      final committed = await _openAIClientMic?.commitBuffer() ?? false;
+      if (committed) {
+        _pendingMicBytes = 0;
+      }
     }
 
     setState(() {
@@ -506,7 +546,7 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   Future<void> _openSettings() async {
-    await _loadPromptFromFile();
+    final active = await AgentProfileStore.instance.getActiveAgent();
     final view = WidgetsBinding.instance.platformDispatcher.views.first;
     final screenWidth = view.physicalSize.width / view.devicePixelRatio;
     final screenHeight = view.physicalSize.height / view.devicePixelRatio;
@@ -514,7 +554,11 @@ class _RecordingBarState extends State<RecordingBar> {
     final window = await DesktopMultiWindow.createWindow(jsonEncode({
       'type': 'settings',
       'mainWindowId': 0,
-      'prompt': _promptOverride,
+      'prompt': active.prompt,
+      'agentId': active.id,
+      'agentName': active.name,
+      'agentMode': active.mode,
+      'canEditPrompt': active.canEditPrompt,
     }));
     window
       ..setFrame(
@@ -543,7 +587,13 @@ class _RecordingBarState extends State<RecordingBar> {
       // Crea burbuja "en vivo"
       if (!_assistantStreamStarted) {
         _assistantStreamStarted = true;
-        _chatResponses.add(_ChatMessage(role: 'assistant', text: ''));
+        _chatResponses.add(
+          _ChatMessage(
+            role: 'assistant',
+            text: '',
+            assistantTurnId: _activeAssistantTurnId,
+          ),
+        );
         _streamingAssistantIndex = _chatResponses.length - 1;
       }
 
@@ -555,7 +605,10 @@ class _RecordingBarState extends State<RecordingBar> {
         // Si todavÃ­a no hay nada â€œchat vÃ¡lidoâ€, no muestres basura
         final visible = _streamingAssistantText.trim();
         _chatResponses[idx] = _ChatMessage(
-            role: 'assistant', text: visible.isEmpty ? '...' : visible);
+          role: 'assistant',
+          text: visible.isEmpty ? '...' : visible,
+          assistantTurnId: _activeAssistantTurnId,
+        );
       }
     });
 
@@ -594,7 +647,10 @@ class _RecordingBarState extends State<RecordingBar> {
     if (out.length > 4) {
       return out.take(4).join('\n');
     }
-    return out.join('\n');
+    if (out.isNotEmpty) {
+      return out.join('\n');
+    }
+    return _extractFallbackChatText(text);
   }
 
   /// âœ… Llama con text normal.
@@ -630,7 +686,6 @@ class _RecordingBarState extends State<RecordingBar> {
             }
             _lastMicLine = tagged;
             _lastMicTranscriptAt = now;
-            _markMicActivity();
             _triggerResponseFromTranscript(
               source: 'mic',
               transcriptLine: normalized,
@@ -767,7 +822,13 @@ class _RecordingBarState extends State<RecordingBar> {
       return;
     }
 
-    _chatResponses.add(_ChatMessage(role: 'assistant', text: t));
+    _chatResponses.add(
+      _ChatMessage(
+        role: 'assistant',
+        text: t,
+        assistantTurnId: _activeAssistantTurnId,
+      ),
+    );
   }
 
   void _handleResponseComplete() {
@@ -819,6 +880,13 @@ class _RecordingBarState extends State<RecordingBar> {
       }
     }
 
+    if (finalLines.isEmpty) {
+      final fallback = _extractFallbackChatText(_currentResponse);
+      if (fallback.isNotEmpty) {
+        finalLines.add(fallback);
+      }
+    }
+
     setState(() {
       final idx = _streamingAssistantIndex;
 
@@ -828,8 +896,11 @@ class _RecordingBarState extends State<RecordingBar> {
         if (idx != null && idx >= 0 && idx < _chatResponses.length) {
           final fallback = _streamingAssistantText.trim();
           if (fallback.isNotEmpty) {
-            _chatResponses[idx] =
-                _ChatMessage(role: 'assistant', text: fallback);
+            _chatResponses[idx] = _ChatMessage(
+              role: 'assistant',
+              text: fallback,
+              assistantTurnId: _activeAssistantTurnId,
+            );
           }
         }
       } else {
@@ -843,7 +914,13 @@ class _RecordingBarState extends State<RecordingBar> {
               _chatResponses.last.text.trim() == line) {
             continue;
           }
-          _chatResponses.add(_ChatMessage(role: 'assistant', text: line));
+          _chatResponses.add(
+            _ChatMessage(
+              role: 'assistant',
+              text: line,
+              assistantTurnId: _activeAssistantTurnId,
+            ),
+          );
         }
       }
 
@@ -865,6 +942,7 @@ class _RecordingBarState extends State<RecordingBar> {
     setState(() {
       _micResponseInFlight = false;
       _responseInFlight = false;
+      _activeAssistantTurnId = null;
     });
 
     if (_finalResponseQueued) {
@@ -1136,6 +1214,29 @@ class _RecordingBarState extends State<RecordingBar> {
       return '';
     }
     return trimmed;
+  }
+
+  String _extractFallbackChatText(String raw) {
+    var text = _extractResponseText(raw).trim();
+    text = _cleanAssistantText(text);
+    if (text.isEmpty) return '';
+
+    final kept = <String>[];
+    for (final line in text.split('\n')) {
+      final t = line.trim();
+      if (t.isEmpty) continue;
+      if (RegExp(r'^CHAT\s*:?\s*$', caseSensitive: false).hasMatch(t)) continue;
+      if (RegExp(r'^SUGERENCIAS\s*:?\s*$', caseSensitive: false)
+          .hasMatch(t)) {
+        continue;
+      }
+      if (t.toLowerCase().startsWith(_suggestionPrefix.toLowerCase())) continue;
+      kept.add(t);
+    }
+
+    final fallback = kept.join('\n').trim();
+    if (fallback.isEmpty) return '';
+    return fallback.length > 800 ? fallback.substring(0, 800).trim() : fallback;
   }
 
   String _cleanChatSectionText(String raw) {
@@ -1528,8 +1629,10 @@ class _RecordingBarState extends State<RecordingBar> {
     final bytes = _pendingSystemBytes;
     if (bytes < minCommitBytesSystem) return;
 
-    await _openAIClientSystem?.commitBuffer();
-    _pendingSystemBytes = 0;
+    final committed = await _openAIClientSystem?.commitBuffer() ?? false;
+    if (committed) {
+      _pendingSystemBytes = 0;
+    }
   }
 
   Future<void> _maybeCommitMic() async {
@@ -1539,8 +1642,10 @@ class _RecordingBarState extends State<RecordingBar> {
     final bytes = _pendingMicBytes;
     if (bytes < minCommitBytesMic) return;
 
-    await _openAIClientMic?.commitBuffer();
-    _pendingMicBytes = 0;
+    final committed = await _openAIClientMic?.commitBuffer() ?? false;
+    if (committed) {
+      _pendingMicBytes = 0;
+    }
   }
 
   bool _isLikelyVoiceLine(String line) {
@@ -1591,20 +1696,12 @@ class _RecordingBarState extends State<RecordingBar> {
     if (!_listening) return;
     final normalizedSource =
         source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
-    if (normalizedSource == 'mic') {
-      _markMicActivity();
-      _finalResponseQueued = false;
-      _queuedTranscriptKey = '';
-      return;
-    }
     if (normalizedSource != 'sys') return;
 
     final cleanedLine = transcriptLine.trim();
     if (!_isLikelyVoiceLine(cleanedLine)) return;
     if (cleanedLine.length < _minSystemCharsPerTurn) return;
     if (_wordCount(cleanedLine) < _minSystemWordsPerTurn) return;
-    if (_isMicPauseActive) return;
-
     final now = DateTime.now();
     final key = cleanedLine.toLowerCase();
     if (key.isEmpty) return;
@@ -1649,6 +1746,8 @@ class _RecordingBarState extends State<RecordingBar> {
       _micResponseInFlight = true;
       _responseInFlight = true;
       _statusMessage = statusMessage;
+      _assistantTurnSeq += 1;
+      _activeAssistantTurnId = _assistantTurnSeq;
     });
 
     unawaited(_requestResponseForSource(normalizedSource, client));
@@ -1661,13 +1760,17 @@ class _RecordingBarState extends State<RecordingBar> {
     try {
       if (source == 'sys') {
         if (_pendingSystemBytes > 0) {
-          await _openAIClientSystem?.commitBuffer();
-          _pendingSystemBytes = 0;
+          final committed = await _openAIClientSystem?.commitBuffer() ?? false;
+          if (committed) {
+            _pendingSystemBytes = 0;
+          }
         }
       } else {
         if (_pendingMicBytes > 0) {
-          await _openAIClientMic?.commitBuffer();
-          _pendingMicBytes = 0;
+          final committed = await _openAIClientMic?.commitBuffer() ?? false;
+          if (committed) {
+            _pendingMicBytes = 0;
+          }
         }
       }
 
@@ -1772,6 +1875,14 @@ class _RecordingBarState extends State<RecordingBar> {
       },
     );
 
+    if (_audioProcessSystem == null) {
+      setState(() {
+        _statusMessage =
+            'Conectado a OpenAI, pero no se pudo iniciar captura de audio del sistema.';
+      });
+      return;
+    }
+
     final micDevice = windowsMicDevice.trim();
     final includeMic = _micMixEnabled && micDevice.isNotEmpty;
     if (includeMic) {
@@ -1785,6 +1896,12 @@ class _RecordingBarState extends State<RecordingBar> {
         },
       );
     }
+
+    setState(() {
+      _statusMessage = includeMic
+          ? 'AsesorIA iniciada: conectada a OpenAI (sistema + microfono). Ya puedes hablar.'
+          : 'AsesorIA iniciada: conectada a OpenAI. Ya puedes hablar.';
+    });
   }
 
   Future<void> _startWindowsDeviceCapture({
@@ -2467,15 +2584,21 @@ class _TranscriptEntry {
 }
 
 class _ChatMessage {
-  _ChatMessage({required this.role, required this.text, DateTime? at})
-      : at = at ?? DateTime.now();
+  _ChatMessage({
+    required this.role,
+    required this.text,
+    this.assistantTurnId,
+    DateTime? at,
+  }) : at = at ?? DateTime.now();
 
   final String role; // 'assistant' | 'user'
   final String text;
+  final int? assistantTurnId;
   final DateTime at;
 }
 
 class _ChatPane extends StatelessWidget {
+  // Turn-aware chat styling is handled in this widget.
   const _ChatPane({
     required this.controller,
     required this.messages,
@@ -2502,6 +2625,17 @@ class _ChatPane extends StatelessWidget {
     }
 
     final itemCount = messages.length + (isThinking ? 1 : 0);
+    final assistantTurnIds = messages
+        .where((m) => m.role == 'assistant' && m.assistantTurnId != null)
+        .map((m) => m.assistantTurnId!)
+        .toSet()
+        .toList()
+      ..sort();
+    final latestAssistantTurnId =
+        assistantTurnIds.isNotEmpty ? assistantTurnIds.last : null;
+    final previousAssistantTurnId = assistantTurnIds.length > 1
+        ? assistantTurnIds[assistantTurnIds.length - 2]
+        : null;
 
     return ListView.builder(
       controller: controller,
@@ -2517,6 +2651,9 @@ class _ChatPane extends StatelessWidget {
             : messages[index].text.trim();
 
         final isAssistant = role == 'assistant';
+        final currentAssistantTurnId = isThinkingRow
+            ? latestAssistantTurnId
+            : messages[index].assistantTurnId;
 
         return Align(
           alignment: isAssistant ? Alignment.centerLeft : Alignment.centerRight,
@@ -2526,7 +2663,14 @@ class _ChatPane extends StatelessWidget {
             constraints: const BoxConstraints(maxWidth: 560),
             decoration: BoxDecoration(
               color: isAssistant
-                  ? colorScheme.surfaceVariant.withOpacity(0.40)
+                  ? ((latestAssistantTurnId != null &&
+                          currentAssistantTurnId == latestAssistantTurnId)
+                      ? colorScheme.primary.withOpacity(0.24)
+                      : (previousAssistantTurnId != null &&
+                              currentAssistantTurnId ==
+                                  previousAssistantTurnId)
+                          ? colorScheme.primary.withOpacity(0.14)
+                          : colorScheme.surfaceVariant.withOpacity(0.40))
                   : colorScheme.primary.withOpacity(0.22),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(

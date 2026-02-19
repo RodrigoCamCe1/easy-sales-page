@@ -1,6 +1,5 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
 import 'dart:io';
 
 import 'package:flutter/foundation.dart';
@@ -35,6 +34,10 @@ class OpenAIRealtimeClient {
 
   IOWebSocketChannel? _channel;
   String _sessionInstructions = '';
+  int _bufferedAudioBytes = 0;
+
+  // 16kHz * mono * 16-bit * 100ms ~= 3200 bytes.
+  static const int _minCommitBytes = 3200;
 
   // Para evitar dobles completes en un mismo “response”
   bool _completedThisTurn = false;
@@ -128,6 +131,8 @@ class OpenAIRealtimeClient {
   }
 
   void appendAudio(Uint8List audioChunk) {
+    if (audioChunk.isEmpty) return;
+    _bufferedAudioBytes += audioChunk.length;
     final encoded = base64Encode(audioChunk);
     if (showEvents) {
       debugPrint('OpenAI[$sourceTag] appendAudio ${audioChunk.length} bytes');
@@ -138,9 +143,20 @@ class OpenAIRealtimeClient {
     }));
   }
 
-  Future<void> commitBuffer() async {
+  Future<bool> commitBuffer() async {
+    if (_bufferedAudioBytes < _minCommitBytes) {
+      if (showEvents) {
+        debugPrint(
+          'OpenAI[$sourceTag] skip commitBuffer: only $_bufferedAudioBytes bytes buffered',
+        );
+      }
+      return false;
+    }
+    if (_channel == null) return false;
     if (showEvents) debugPrint('OpenAI[$sourceTag] commitBuffer');
     _channel?.sink.add(jsonEncode({'type': 'input_audio_buffer.commit'}));
+    _bufferedAudioBytes = 0;
+    return true;
   }
 
   Future<void> requestResponse({required String instructions}) async {
@@ -166,6 +182,7 @@ class OpenAIRealtimeClient {
     _transcriptIdleTimer?.cancel();
     _transcriptIdleTimer = null;
     _userTranscriptAccum.clear();
+    _bufferedAudioBytes = 0;
 
     await _channel?.sink.close();
     _channel = null;
@@ -194,6 +211,9 @@ class OpenAIRealtimeClient {
     if (type == 'error') {
       final msg = _extractErrorMessage(payload);
       debugPrint('OpenAI[$sourceTag] ERROR: $msg');
+      if (_isIgnorableError(payload)) {
+        return;
+      }
       _safeCompleteOnce(reason: 'type=error');
       return;
     }
@@ -364,6 +384,21 @@ class OpenAIRealtimeClient {
     final msg = payload['message'];
     if (msg is String) return msg;
     return payload.toString();
+  }
+
+  bool _isIgnorableError(Map<String, dynamic> payload) {
+    final err = payload['error'];
+    if (err is! Map) return false;
+
+    final code = (err['code'] as String? ?? '').trim().toLowerCase();
+    final message = (err['message'] as String? ?? '').trim().toLowerCase();
+
+    if (code == 'input_audio_buffer_commit_empty') return true;
+    if (message.contains('buffer too small') &&
+        message.contains('input audio buffer')) {
+      return true;
+    }
+    return false;
   }
 
   /// Extrae texto SOLO de eventos de transcripción.

@@ -4,10 +4,12 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
-import '../core/app_config.dart';
+import '../models/agent_profile.dart';
 import '../models/conversation.dart';
 import '../pages/conversation_detail_page.dart';
+import '../services/agent_profile_store.dart';
 import '../services/conversation_store.dart';
+import 'agents_screen.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -24,12 +26,14 @@ class _HomeScreenState extends State<HomeScreen> {
   DateTime? _selectedDate;
   bool _loading = true;
   WindowController? _barWindow;
+  AgentProfile? _activeAgent;
 
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
     _loadConversations();
+    _loadActiveAgent();
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       // ⚠️ IGNORAR TODO lo que NO venga de la barra
       if (_barWindow == null || fromWindowId != _barWindow!.windowId) {
@@ -242,6 +246,14 @@ class _HomeScreenState extends State<HomeScreen> {
     });
   }
 
+  Future<void> _loadActiveAgent() async {
+    final active = await AgentProfileStore.instance.getActiveAgent();
+    if (!mounted) return;
+    setState(() {
+      _activeAgent = active;
+    });
+  }
+
   Future<void> _openRecordingBar() async {
     if (_barWindow != null) {
       await _barWindow?.show();
@@ -266,21 +278,50 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openSettings() async {
-    String prompt = systemPrompt;
-    if (await promptFile.exists()) {
-      final content = (await promptFile.readAsString()).trim();
-      if (content.isNotEmpty) {
-        prompt = content;
-      }
-    }
+    final activeAgent = await AgentProfileStore.instance.getActiveAgent();
     final window = await DesktopMultiWindow.createWindow(jsonEncode({
       'type': 'settings',
       'mainWindowId': 0,
-      'prompt': prompt,
+      'prompt': activeAgent.prompt,
+      'agentId': activeAgent.id,
+      'agentName': activeAgent.name,
+      'agentMode': activeAgent.mode,
+      'canEditPrompt': activeAgent.canEditPrompt,
     }));
     window
       ..setTitle('Configuracion')
       ..show();
+  }
+
+  Future<void> _syncBarPromptWithActiveAgent() async {
+    if (_barWindow == null) return;
+    final active = await AgentProfileStore.instance.getActiveAgent();
+    try {
+      await DesktopMultiWindow.invokeMethod(
+        _barWindow!.windowId,
+        'updatePrompt',
+        {
+          'agentId': active.id,
+          'prompt': active.composedPrompt,
+          'agentName': active.name,
+          'agentMode': active.mode,
+          'canEditPrompt': active.canEditPrompt,
+        },
+      );
+    } catch (_) {}
+  }
+
+  Future<void> _openAgentsScreen() async {
+    final changed = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => const AgentsScreen(),
+      ),
+    );
+    if (changed == true) {
+      await _loadActiveAgent();
+      await _syncBarPromptWithActiveAgent();
+    }
   }
 
   @override
@@ -456,8 +497,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           ),
                           const SizedBox(width: 12),
                           _SoftPill(
-                            label: 'Agente',
+                            label: _activeAgent?.name ?? 'Agente',
                             icon: Icons.tune_rounded,
+                            onTap: _openAgentsScreen,
                           ),
                           const Spacer(),
                           ElevatedButton.icon(
@@ -589,29 +631,38 @@ class _HomeScreenState extends State<HomeScreen> {
 }
 
 class _SoftPill extends StatelessWidget {
-  const _SoftPill({required this.label, required this.icon});
+  const _SoftPill({
+    required this.label,
+    required this.icon,
+    this.onTap,
+  });
 
   final String label;
   final IconData icon;
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
-      decoration: BoxDecoration(
-        color: Colors.white.withOpacity(0.08),
-        borderRadius: BorderRadius.circular(20),
-        border: Border.all(color: Colors.white.withOpacity(0.12)),
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Icon(icon, size: 16, color: Colors.white70),
-          const SizedBox(width: 6),
-          Text(label, style: const TextStyle(color: Colors.white70)),
-          const SizedBox(width: 4),
-          const Icon(Icons.expand_more, size: 16, color: Colors.white70),
-        ],
+    return InkWell(
+      onTap: onTap,
+      borderRadius: BorderRadius.circular(20),
+      child: Container(
+        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.08),
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(color: Colors.white.withOpacity(0.12)),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(icon, size: 16, color: Colors.white70),
+            const SizedBox(width: 6),
+            Text(label, style: const TextStyle(color: Colors.white70)),
+            const SizedBox(width: 4),
+            const Icon(Icons.expand_more, size: 16, color: Colors.white70),
+          ],
+        ),
       ),
     );
   }

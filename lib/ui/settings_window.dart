@@ -4,7 +4,7 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
-import '../core/app_config.dart';
+import '../services/agent_profile_store.dart';
 
 class SettingsWindowApp extends StatelessWidget {
   const SettingsWindowApp({
@@ -12,11 +12,19 @@ class SettingsWindowApp extends StatelessWidget {
     required this.windowId,
     required this.mainWindowId,
     required this.initialPrompt,
+    required this.agentId,
+    required this.agentName,
+    required this.agentMode,
+    required this.canEditPrompt,
   });
 
   final int windowId;
   final int mainWindowId;
   final String initialPrompt;
+  final String agentId;
+  final String agentName;
+  final String agentMode;
+  final bool canEditPrompt;
 
   @override
   Widget build(BuildContext context) {
@@ -38,6 +46,10 @@ class SettingsWindowApp extends StatelessWidget {
         windowId: windowId,
         mainWindowId: mainWindowId,
         initialPrompt: initialPrompt,
+        agentId: agentId,
+        agentName: agentName,
+        agentMode: agentMode,
+        canEditPrompt: canEditPrompt,
       ),
     );
   }
@@ -49,11 +61,19 @@ class SettingsWindowPage extends StatefulWidget {
     required this.windowId,
     required this.mainWindowId,
     required this.initialPrompt,
+    required this.agentId,
+    required this.agentName,
+    required this.agentMode,
+    required this.canEditPrompt,
   });
 
   final int windowId;
   final int mainWindowId;
   final String initialPrompt;
+  final String agentId;
+  final String agentName;
+  final String agentMode;
+  final bool canEditPrompt;
 
   @override
   State<SettingsWindowPage> createState() => _SettingsWindowPageState();
@@ -69,7 +89,6 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
       _configureFramelessWindow();
     });
     _controller = TextEditingController(text: widget.initialPrompt);
-    _loadPromptFromFile();
   }
 
   @override
@@ -79,9 +98,23 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
   }
 
   Future<void> _savePrompt() async {
+    if (!widget.canEditPrompt) {
+      await _closeWindow();
+      return;
+    }
+
     final prompt = _controller.text.trim();
-    if (prompt.isNotEmpty) {
-      await promptFile.writeAsString(prompt);
+    if (prompt.isEmpty) return;
+    final updatedConfig = await AgentProfileStore.instance.updateAgentPrompt(
+      agentId: widget.agentId,
+      prompt: prompt,
+    );
+    var updatedAgent = updatedConfig.activeAgent;
+    for (final agent in updatedConfig.agents) {
+      if (agent.id == widget.agentId) {
+        updatedAgent = agent;
+        break;
+      }
     }
     final targetIds = <int>{
       widget.mainWindowId,
@@ -94,13 +127,23 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
         await DesktopMultiWindow.invokeMethod(
           id,
           'updatePrompt',
-          {'prompt': prompt},
+          {
+            'agentId': widget.agentId,
+            'prompt': updatedAgent?.composedPrompt ?? prompt,
+            'agentName': widget.agentName,
+            'agentMode': widget.agentMode,
+            'canEditPrompt': widget.canEditPrompt,
+          },
         );
       } catch (_) {
         // Best-effort broadcast to the main window.
       }
     }
 
+    await _closeWindow();
+  }
+
+  Future<void> _closeWindow() async {
     try {
       await WindowController.fromWindowId(widget.windowId).close();
     } catch (_) {
@@ -113,16 +156,6 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
   void _openMicPrivacySettings() {
     if (!Platform.isWindows) return;
     Process.start('cmd', ['/c', 'start', 'ms-settings:privacy-microphone']);
-  }
-
-  Future<void> _loadPromptFromFile() async {
-    if (!await promptFile.exists()) return;
-    final content = (await promptFile.readAsString()).trim();
-    if (content.isEmpty) return;
-    if (!mounted) return;
-    setState(() {
-      _controller.text = content;
-    });
   }
 
   Future<void> _configureFramelessWindow() async {
@@ -187,13 +220,20 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
                           ),
                     ),
                     const SizedBox(height: 6),
-                    const Text(
-                      'Escribe aqui el prompt que guia las respuestas de la IA.',
+                    Text(
+                      'Agente activo: ${widget.agentName} (${widget.agentMode})',
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      widget.canEditPrompt
+                          ? 'Este agente permite editar el prompt.'
+                          : 'Este agente usa prompt bloqueado y no se puede editar.',
                     ),
                     const SizedBox(height: 10),
                     Expanded(
                       child: TextField(
                         controller: _controller,
+                        enabled: widget.canEditPrompt,
                         maxLines: null,
                         expands: true,
                         decoration: const InputDecoration(
@@ -206,8 +246,12 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
                     SizedBox(
                       width: double.infinity,
                       child: ElevatedButton(
-                        onPressed: _savePrompt,
-                        child: const Text('Guardar prompt'),
+                        onPressed: widget.canEditPrompt ? _savePrompt : null,
+                        child: Text(
+                          widget.canEditPrompt
+                              ? 'Guardar prompt'
+                              : 'Prompt bloqueado',
+                        ),
                       ),
                     ),
                   ],

@@ -112,6 +112,11 @@ Future<void> main(List<String> args) async {
         windowId: windowId,
         mainWindowId: arguments['mainWindowId'] as int? ?? 0,
         initialPrompt: arguments['prompt'] as String? ?? systemPrompt,
+        agentId: arguments['agentId'] as String? ?? 'custom-default',
+        agentName:
+            arguments['agentName'] as String? ?? 'Personalizar tu agente',
+        agentMode: arguments['agentMode'] as String? ?? 'custom',
+        canEditPrompt: arguments['canEditPrompt'] as bool? ?? true,
       ));
       return;
     }
@@ -142,5 +147,5 @@ Future<void> main(List<String> args) async {
     await windowManager.focus();
   });
 
-  runApp(const AsesoriaApp());
+  runApp(const AsesoriaApp());  
 }
