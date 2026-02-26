@@ -63,19 +63,24 @@ class _AgentsScreenState extends State<AgentsScreen> {
     );
     if (form == null) return;
 
-    final next = await AgentProfileStore.instance.createCustomAgent(
-      name: form.name,
-      communicationStyle: form.communicationStyle,
-      communicationStyleOther: form.communicationStyleOther,
-      mindset: form.mindset,
-      prompt: form.prompt,
-    );
-    if (!mounted) return;
-    setState(() {
-      _config = next;
-      _hasChanges = true;
-    });
-    _closeScreen();
+    try {
+      final next = await AgentProfileStore.instance.createCustomAgent(
+        name: form.name,
+        communicationStyle: form.communicationStyle,
+        communicationStyleOther: form.communicationStyleOther,
+        mindset: form.mindset,
+        prompt: form.prompt,
+      );
+      if (!mounted) return;
+      setState(() {
+        _config = next;
+        _hasChanges = true;
+      });
+      _closeScreen();
+    } catch (error) {
+      if (!mounted) return;
+      _showError(error.toString());
+    }
   }
 
   Future<void> _quickEditAgent(AgentProfile agent) async {
@@ -90,18 +95,29 @@ class _AgentsScreenState extends State<AgentsScreen> {
     );
     if (form == null) return;
 
-    final next = await AgentProfileStore.instance.updateAgentQuickProfile(
-      agentId: agent.id,
-      communicationStyle: form.communicationStyle,
-      communicationStyleOther: form.communicationStyleOther,
-      mindset: form.mindset,
-      prompt: form.prompt,
+    try {
+      final next = await AgentProfileStore.instance.updateAgentQuickProfile(
+        agentId: agent.id,
+        communicationStyle: form.communicationStyle,
+        communicationStyleOther: form.communicationStyleOther,
+        mindset: form.mindset,
+        prompt: form.prompt,
+      );
+      if (!mounted) return;
+      setState(() {
+        _config = next;
+        _hasChanges = true;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      _showError(error.toString());
+    }
+  }
+
+  void _showError(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message)),
     );
-    if (!mounted) return;
-    setState(() {
-      _config = next;
-      _hasChanges = true;
-    });
   }
 
   Future<_AgentEditorResult?> _showAgentEditor({
@@ -212,7 +228,6 @@ class _AgentsScreenState extends State<AgentsScreen> {
                     final prompt = promptCtrl.text.trim();
                     if (name.isEmpty || mindset.isEmpty) return;
                     if (selectedStyle == 'otro' && styleOther.isEmpty) return;
-                    if (canEditPrompt && prompt.isEmpty) return;
                     Navigator.pop(
                       context,
                       _AgentEditorResult(

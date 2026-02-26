@@ -14,6 +14,7 @@ class OpenAIRealtimeClient {
     required this.onTranscriptDelta,
     this.onComplete,
     this.showEvents = true,
+    this.transcriptionOnly = false,
     String? sessionInstructions,
     this.sourceTag = '',
   }) : _sessionInstructions = sessionInstructions?.trim() ?? '';
@@ -30,6 +31,9 @@ class OpenAIRealtimeClient {
 
   final VoidCallback? onComplete;
   final bool showEvents;
+
+  /// Si es true, el VAD detecta habla y transcribe pero NO genera respuestas.
+  final bool transcriptionOnly;
   final String sourceTag;
 
   IOWebSocketChannel? _channel;
@@ -108,6 +112,8 @@ class OpenAIRealtimeClient {
       'turn_detection': {
         'type': 'server_vad',
         'silence_duration_ms': vadSilenceMs,
+        // Si es solo transcripción, el VAD detecta habla pero no dispara respuesta.
+        if (transcriptionOnly) 'create_response': false,
       },
       // ✅ transcripción entrada: español
       'input_audio_transcription': {
@@ -115,7 +121,7 @@ class OpenAIRealtimeClient {
         'language': 'es',
         'prompt': 'Transcribe únicamente en español (es).',
       },
-      if (_sessionInstructions.trim().isNotEmpty)
+      if (_sessionInstructions.trim().isNotEmpty && !transcriptionOnly)
         'instructions': _sessionInstructions.trim(),
     };
 

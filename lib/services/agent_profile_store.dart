@@ -6,45 +6,137 @@ import 'package:path_provider/path_provider.dart';
 
 import '../core/app_config.dart';
 import '../models/agent_profile.dart';
+import 'auth_api.dart';
+import 'auth_session_manager.dart';
+import 'backend_data_api.dart';
+import 'store_helpers.dart';
 
 class AgentProfileStore {
   AgentProfileStore._();
 
   static final AgentProfileStore instance = AgentProfileStore._();
+  final BackendDataApi _remoteApi = BackendDataApi();
 
   static const String salesAgentId = 'sales';
   static const String interviewsAgentId = 'interviews';
   static const String customDefaultAgentId = 'custom-default';
 
+  Future<Directory> _documentsDir() async {
+    return getApplicationDocumentsDirectory();
+  }
+
   Future<File> _file() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File(p.join(dir.path, 'agents_config.json'));
+    final dir = await _documentsDir();
+    final scoped = File(
+      p.join(dir.path, 'agents_config_${await storeUserKey()}.json'),
+    );
+
+    final legacy = File(p.join(dir.path, 'agents_config.json'));
+
+    if (await legacy.exists() && !await scoped.exists()) {
+      await legacy.copy(scoped.path);
+    }
+
+    return scoped;
+  }
+
+  Future<File> _userPromptFile() async {
+    final dir = await _documentsDir();
+    final userPrompt = File(
+      p.join(dir.path, 'prompt_${await storeUserKey()}.txt'),
+    );
+
+    if (await promptFile.exists() && !await userPrompt.exists()) {
+      await promptFile.copy(userPrompt.path);
+    }
+
+    return userPrompt;
+  }
+
+  Future<AgentConfig?> _loadLocalConfigOrNull() async {
+    final scoped = await _file();
+
+    Future<AgentConfig?> parseFile(File source) async {
+      if (!await source.exists()) return null;
+      final raw = (await source.readAsString()).trim();
+      if (raw.isEmpty) return null;
+
+      dynamic decoded;
+      try {
+        decoded = jsonDecode(raw);
+      } catch (_) {
+        return null;
+      }
+      if (decoded is! Map) return null;
+
+      final current = AgentConfig.fromJson(Map<String, dynamic>.from(decoded));
+      return _normalizeConfig(current);
+    }
+
+    final scopedConfig = await parseFile(scoped);
+    if (scopedConfig != null) return scopedConfig;
+
+    final dir = await _documentsDir();
+    final legacy = File(p.join(dir.path, 'agents_config.json'));
+    final legacyConfig = await parseFile(legacy);
+    if (legacyConfig != null && !await scoped.exists()) {
+      await legacy.copy(scoped.path);
+    }
+    return legacyConfig;
   }
 
   Future<AgentConfig> loadConfig() async {
-    final file = await _file();
-    if (!await file.exists()) {
-      return _bootstrapConfigFromLegacyPrompt();
+    final token = AuthSessionManager.instance.accessToken?.trim() ?? '';
+    if (token.isNotEmpty) {
+      try {
+        final local = await _loadLocalConfigOrNull();
+        final remote = await _remoteApi.getAgentsConfig(accessToken: token);
+        if (remote != null) {
+          final current = AgentConfig.fromJson(remote);
+          final normalized = _normalizeConfig(current);
+          final merged = _mergeRemoteWithLocal(
+            remoteConfig: normalized,
+            localConfig: local,
+          );
+          await _persistLocal(merged);
+          await _syncLegacyPrompt(
+            merged.activeAgent?.composedPrompt ?? systemPrompt,
+          );
+          await _persistRemote(merged, silent: true);
+          return merged;
+        }
+
+        // Seed inicial: backend vacio, intenta subir primero lo local.
+        if (local != null) {
+          await _persistLocal(local);
+          await _syncLegacyPrompt(local.activeAgent?.composedPrompt ?? systemPrompt);
+          await _persistRemote(local, silent: true);
+          return local;
+        }
+
+        final seeded = await _bootstrapConfigFromLegacyPrompt();
+        await _persistRemote(seeded, silent: true);
+        return seeded;
+      } on AuthApiException catch (error) {
+        if (error.statusCode == 401) {
+          final refreshed =
+              await AuthSessionManager.instance.refreshWithStoredToken();
+          if (refreshed) {
+            return loadConfig();
+          }
+        }
+      } catch (_) {}
     }
 
-    final raw = (await file.readAsString()).trim();
-    if (raw.isEmpty) return _bootstrapConfigFromLegacyPrompt();
-
-    dynamic decoded;
-    try {
-      decoded = jsonDecode(raw);
-    } catch (_) {
+    final local = await _loadLocalConfigOrNull();
+    if (local == null) {
       return _bootstrapConfigFromLegacyPrompt();
     }
-    if (decoded is! Map) return _bootstrapConfigFromLegacyPrompt();
-
-    final current = AgentConfig.fromJson(Map<String, dynamic>.from(decoded));
-    final normalized = _normalizeConfig(current);
-    await _persist(normalized);
+    await _persistLocal(local);
     await _syncLegacyPrompt(
-      normalized.activeAgent?.composedPrompt ?? systemPrompt,
+      local.activeAgent?.composedPrompt ?? systemPrompt,
     );
-    return normalized;
+    return local;
   }
 
   Future<AgentProfile> getActiveAgent() async {
@@ -100,8 +192,8 @@ class AgentProfileStore {
     final nextStyleOther = communicationStyleOther.trim();
     final nextMindset = mindset.trim();
     final nextPrompt = prompt.trim();
-    if (nextName.isEmpty || nextPrompt.isEmpty || nextMindset.isEmpty) {
-      throw ArgumentError('Nombre, mentalidad y prompt requeridos');
+    if (nextName.isEmpty || nextMindset.isEmpty) {
+      throw ArgumentError('Nombre y mentalidad requeridos');
     }
     if (!_validStyles.contains(nextStyle)) {
       throw ArgumentError('Estilo invalido');
@@ -119,7 +211,7 @@ class AgentProfileStore {
       communicationStyle: nextStyle,
       communicationStyleOther: nextStyle == 'otro' ? nextStyleOther : '',
       mindset: nextMindset,
-      prompt: nextPrompt,
+      prompt: nextPrompt.isEmpty ? systemPrompt : nextPrompt,
       canEditPrompt: true,
     );
 
@@ -179,14 +271,61 @@ class AgentProfileStore {
   }
 
   Future<void> _persist(AgentConfig config) async {
+    await _persistLocal(config);
+    await _persistRemote(config, silent: false);
+  }
+
+  Future<void> _persistLocal(AgentConfig config) async {
     final file = await _file();
     await file.writeAsString(jsonEncode(config.toJson()));
   }
 
+  Future<void> _persistRemote(AgentConfig config, {required bool silent}) async {
+    final payload = config.toJson();
+    await withAuthRetry<void>(
+      action: (token) => _remoteApi.putAgentsConfig(
+        accessToken: token,
+        config: payload,
+      ),
+      silent: silent,
+    );
+  }
+
+  AgentConfig _mergeRemoteWithLocal({
+    required AgentConfig remoteConfig,
+    required AgentConfig? localConfig,
+  }) {
+    if (localConfig == null) return remoteConfig;
+
+    final byId = <String, AgentProfile>{};
+    for (final item in remoteConfig.agents) {
+      byId[item.id] = item;
+    }
+
+    // Conserva agentes que existian localmente pero no llegaron al backend.
+    for (final item in localConfig.agents) {
+      if (item.id.trim().isEmpty) continue;
+      byId.putIfAbsent(item.id, () => item);
+    }
+
+    final merged = _normalizeConfig(
+      AgentConfig(
+        activeAgentId: byId.containsKey(remoteConfig.activeAgentId)
+            ? remoteConfig.activeAgentId
+            : (byId.containsKey(localConfig.activeAgentId)
+                ? localConfig.activeAgentId
+                : remoteConfig.activeAgentId),
+        agents: byId.values.toList(),
+      ),
+    );
+    return merged;
+  }
+
   Future<AgentConfig> _bootstrapConfigFromLegacyPrompt() async {
     var legacyPrompt = '';
-    if (await promptFile.exists()) {
-      legacyPrompt = (await promptFile.readAsString()).trim();
+    final promptCacheFile = await _userPromptFile();
+    if (await promptCacheFile.exists()) {
+      legacyPrompt = (await promptCacheFile.readAsString()).trim();
     }
 
     final builtIns = _defaultBuiltIns();
@@ -258,7 +397,8 @@ class AgentProfileStore {
   Future<void> _syncLegacyPrompt(String prompt) async {
     final next = prompt.trim();
     if (next.isEmpty) return;
-    await promptFile.writeAsString(next);
+    final promptCacheFile = await _userPromptFile();
+    await promptCacheFile.writeAsString(next);
   }
 
   static const Set<String> _validStyles = {

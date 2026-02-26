@@ -8,6 +8,7 @@ import '../models/agent_profile.dart';
 import '../models/conversation.dart';
 import '../pages/conversation_detail_page.dart';
 import '../services/agent_profile_store.dart';
+import '../services/auth_session_manager.dart';
 import '../services/conversation_store.dart';
 import 'agents_screen.dart';
 
@@ -255,21 +256,34 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openRecordingBar() async {
+    final view = WidgetsBinding.instance.platformDispatcher.views.first;
+    final screenWidth = view.physicalSize.width;
+    final screenHeight = view.physicalSize.height;
+    const minWidth = 820.0;
+    const maxWidth = 1180.0;
+    const widthRatio = 0.74;
+    const minHeight = 420.0;
+    const heightRatio = 0.84;
+    final targetWidth = (screenWidth * widthRatio).clamp(minWidth, maxWidth);
+    final targetHeight = (screenHeight * heightRatio).clamp(
+      minHeight,
+      screenHeight - 28.0,
+    );
+    final left = (screenWidth - targetWidth) / 2;
+    final top = (screenHeight - targetHeight) / 2;
+
     if (_barWindow != null) {
+      _barWindow?.setFrame(Rect.fromLTWH(left, top, targetWidth, targetHeight));
       await _barWindow?.show();
       await windowManager.hide();
       return;
     }
-    final view = WidgetsBinding.instance.platformDispatcher.views.first;
-    final screenWidth = view.physicalSize.width;
-    final screenHeight = view.physicalSize.height;
-    const topOffset = 28.0;
     final window = await DesktopMultiWindow.createWindow(jsonEncode({
       'type': 'bar',
     }));
     window
       ..setFrame(
-        Rect.fromLTWH(0, topOffset, screenWidth, screenHeight - topOffset),
+        Rect.fromLTWH(left, top, targetWidth, targetHeight),
       )
       ..setTitle('AsesorIA')
       ..show();
@@ -324,6 +338,10 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _logout() async {
+    await AuthSessionManager.instance.logout();
+  }
+
   @override
   void dispose() {
     _searchController.removeListener(_onSearchChanged);
@@ -334,6 +352,13 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   Widget build(BuildContext context) {
     final textTheme = Theme.of(context).textTheme;
+    final user = AuthSessionManager.instance.currentUserValue;
+    final userName = (user?.name ?? '').trim();
+    final userEmail = (user?.email ?? '').trim();
+    final userInitialSource = userName.isNotEmpty
+        ? userName
+        : (userEmail.isNotEmpty ? userEmail : 'A');
+    final userInitial = userInitialSource[0].toUpperCase();
 
     return Scaffold(
       body: Container(
@@ -467,15 +492,53 @@ class _HomeScreenState extends State<HomeScreen> {
                       ),
                     ),
                     const SizedBox(width: 12),
-                    Container(
-                      width: 34,
-                      height: 34,
-                      decoration: BoxDecoration(
-                        color: const Color(0xFF2A2F3A),
-                        borderRadius: BorderRadius.circular(10),
+                    PopupMenuButton<String>(
+                      tooltip: 'Perfil',
+                      onSelected: (value) async {
+                        if (value == 'logout') {
+                          await _logout();
+                        }
+                      },
+                      itemBuilder: (context) => [
+                        PopupMenuItem<String>(
+                          enabled: false,
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                userName.isNotEmpty ? userName : 'Usuario',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w600,
+                                ),
+                              ),
+                              if (userEmail.isNotEmpty)
+                                Text(
+                                  userEmail,
+                                  style: const TextStyle(
+                                    color: Colors.white70,
+                                    fontSize: 12,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const PopupMenuDivider(),
+                        const PopupMenuItem<String>(
+                          value: 'logout',
+                          child: Text('Cerrar sesion'),
+                        ),
+                      ],
+                      child: Container(
+                        width: 34,
+                        height: 34,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF2A2F3A),
+                          borderRadius: BorderRadius.circular(10),
+                        ),
+                        alignment: Alignment.center,
+                        child: Text(userInitial),
                       ),
-                      alignment: Alignment.center,
-                      child: const Text('A'),
                     ),
                   ],
                 ),

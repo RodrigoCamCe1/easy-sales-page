@@ -5,6 +5,7 @@
 list(APPEND FLUTTER_PLUGIN_LIST
   desktop_multi_window
   flutter_audio_capture
+  flutter_secure_storage_linux
   screen_retriever
   window_manager
 )

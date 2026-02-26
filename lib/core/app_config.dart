@@ -50,3 +50,6 @@ int _readIntEnv(String key, int fallback) {
 int get vadSilenceMs => _readIntEnv('OPENAI_VAD_SILENCE_MS', defaultVadSilenceMs);
 int get realtimeFlushSeconds =>
     _readIntEnv('OPENAI_REALTIME_FLUSH_SECONDS', defaultRealtimeFlushSeconds);
+
+String get backendApiBaseUrl =>
+    (dotenv.env['BACKEND_API_URL'] ?? 'http://localhost:4000').trim();

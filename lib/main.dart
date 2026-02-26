@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'core/app_config.dart';
+import 'services/auth_session_manager.dart';
 import 'ui/recording_bar.dart';
 import 'ui/settings_window.dart';
 
@@ -122,6 +123,7 @@ Future<void> main(List<String> args) async {
     }
 
     // ✅ En cualquier otro caso (incluye vacío) => BAR
+    await AuthSessionManager.instance.bootstrap();
     runApp(const RecordingBarApp());
     return;
   }
