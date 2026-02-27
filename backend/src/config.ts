@@ -21,7 +21,10 @@ const envSchema = z.object({
   SMTP_PASS: z.string().optional(),
   SMTP_FROM: z.string().default("EasySales IA <no-reply@easysales.local>"),
   OPENAI_API_KEY: z.string().min(1, "OPENAI_API_KEY is required"),
-  OPENAI_REALTIME_MODEL: z.string().default("gpt-4o-realtime-preview")
+  OPENAI_REALTIME_MODEL: z.string().default("gpt-4o-realtime-preview"),
+  QDRANT_URL: z.string().min(1, "QDRANT_URL is required"),
+  QDRANT_API_KEY: z.string().min(1, "QDRANT_API_KEY is required"),
+  OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small")
 });
 
 const parsed = envSchema.safeParse(process.env);

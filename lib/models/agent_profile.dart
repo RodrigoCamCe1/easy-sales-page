@@ -1,3 +1,55 @@
+class AttachedFileRef {
+  const AttachedFileRef({
+    required this.id,
+    required this.fileName,
+    required this.fileType,
+    required this.chunkCount,
+    required this.charCount,
+  });
+
+  final String id;
+  final String fileName;
+  final String fileType;
+  final int chunkCount;
+  final int charCount;
+
+  AttachedFileRef copyWith({
+    String? id,
+    String? fileName,
+    String? fileType,
+    int? chunkCount,
+    int? charCount,
+  }) {
+    return AttachedFileRef(
+      id: id ?? this.id,
+      fileName: fileName ?? this.fileName,
+      fileType: fileType ?? this.fileType,
+      chunkCount: chunkCount ?? this.chunkCount,
+      charCount: charCount ?? this.charCount,
+    );
+  }
+
+  Map<String, dynamic> toJson() {
+    return {
+      'id': id,
+      'fileName': fileName,
+      'fileType': fileType,
+      'chunkCount': chunkCount,
+      'charCount': charCount,
+    };
+  }
+
+  factory AttachedFileRef.fromJson(Map<String, dynamic> json) {
+    return AttachedFileRef(
+      id: (json['id'] as String? ?? '').trim(),
+      fileName: (json['fileName'] as String? ?? '').trim(),
+      fileType: (json['fileType'] as String? ?? '').trim(),
+      chunkCount: (json['chunkCount'] as int?) ?? 0,
+      charCount: (json['charCount'] as int?) ?? 0,
+    );
+  }
+}
+
 class AgentProfile {
   const AgentProfile({
     required this.id,
@@ -9,6 +61,7 @@ class AgentProfile {
     required this.canEditPrompt,
     this.communicationStyleOther = '',
     this.isBuiltIn = false,
+    this.attachedFiles = const [],
   });
 
   final String id;
@@ -20,6 +73,7 @@ class AgentProfile {
   final String prompt;
   final bool canEditPrompt;
   final bool isBuiltIn;
+  final List<AttachedFileRef> attachedFiles;
 
   String get effectiveCommunicationStyle {
     if (communicationStyle == 'otro' &&
@@ -59,6 +113,7 @@ class AgentProfile {
     String? prompt,
     bool? canEditPrompt,
     bool? isBuiltIn,
+    List<AttachedFileRef>? attachedFiles,
   }) {
     return AgentProfile(
       id: id ?? this.id,
@@ -71,6 +126,7 @@ class AgentProfile {
       prompt: prompt ?? this.prompt,
       canEditPrompt: canEditPrompt ?? this.canEditPrompt,
       isBuiltIn: isBuiltIn ?? this.isBuiltIn,
+      attachedFiles: attachedFiles ?? this.attachedFiles,
     );
   }
 
@@ -85,10 +141,23 @@ class AgentProfile {
       'prompt': prompt,
       'canEditPrompt': canEditPrompt,
       'isBuiltIn': isBuiltIn,
+      'attachedFiles': attachedFiles.map((f) => f.toJson()).toList(),
     };
   }
 
   factory AgentProfile.fromJson(Map<String, dynamic> json) {
+    final rawFiles = json['attachedFiles'];
+    final parsedFiles = <AttachedFileRef>[];
+    if (rawFiles is List) {
+      for (final item in rawFiles) {
+        if (item is Map) {
+          parsedFiles.add(
+            AttachedFileRef.fromJson(Map<String, dynamic>.from(item)),
+          );
+        }
+      }
+    }
+
     return AgentProfile(
       id: (json['id'] as String? ?? '').trim(),
       name: (json['name'] as String? ?? '').trim(),
@@ -101,6 +170,7 @@ class AgentProfile {
       prompt: (json['prompt'] as String? ?? '').trim(),
       canEditPrompt: json['canEditPrompt'] == true,
       isBuiltIn: json['isBuiltIn'] == true,
+      attachedFiles: parsedFiles,
     );
   }
 }

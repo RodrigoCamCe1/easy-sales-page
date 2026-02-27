@@ -401,6 +401,71 @@ class AgentProfileStore {
     await promptCacheFile.writeAsString(next);
   }
 
+  // ─── Document / file management (RAG) ──────────────────────
+
+  Future<AttachedFileRef> addFileToAgent({
+    required String agentId,
+    required String filePath,
+  }) async {
+    final ref = await withAuthRetry<AttachedFileRef>(
+      action: (token) => _remoteApi.uploadDocument(
+        accessToken: token,
+        agentId: agentId,
+        filePath: filePath,
+      ),
+    );
+    if (ref == null) {
+      throw Exception('No se pudo subir el archivo.');
+    }
+
+    // Update local config with new file ref
+    final config = await loadConfig();
+    final nextAgents = config.agents.map((agent) {
+      if (agent.id != agentId) return agent;
+      return agent.copyWith(
+        attachedFiles: [...agent.attachedFiles, ref],
+      );
+    }).toList();
+    final next = config.copyWith(agents: nextAgents);
+    await _persist(next);
+    return ref;
+  }
+
+  Future<void> removeFileFromAgent({
+    required String agentId,
+    required String fileId,
+  }) async {
+    await withAuthRetry<void>(
+      action: (token) => _remoteApi.deleteDocument(
+        accessToken: token,
+        fileId: fileId,
+      ),
+    );
+
+    final config = await loadConfig();
+    final nextAgents = config.agents.map((agent) {
+      if (agent.id != agentId) return agent;
+      return agent.copyWith(
+        attachedFiles:
+            agent.attachedFiles.where((f) => f.id != fileId).toList(),
+      );
+    }).toList();
+    final next = config.copyWith(agents: nextAgents);
+    await _persist(next);
+  }
+
+  Future<List<AttachedFileRef>> listFilesForAgent({
+    required String agentId,
+  }) async {
+    final result = await withAuthRetry<List<AttachedFileRef>>(
+      action: (token) => _remoteApi.listDocuments(
+        accessToken: token,
+        agentId: agentId,
+      ),
+    );
+    return result ?? [];
+  }
+
   static const Set<String> _validStyles = {
     'formal',
     'informal',

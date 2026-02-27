@@ -1,9 +1,11 @@
 import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../models/agent_profile.dart';
 import '../services/agent_profile_store.dart';
 
 class SettingsWindowApp extends StatelessWidget {
@@ -81,6 +83,9 @@ class SettingsWindowPage extends StatefulWidget {
 
 class _SettingsWindowPageState extends State<SettingsWindowPage> {
   late final TextEditingController _controller;
+  List<AttachedFileRef> _attachedFiles = [];
+  bool _isProcessingFile = false;
+  String? _fileError;
 
   @override
   void initState() {
@@ -89,12 +94,86 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
       _configureFramelessWindow();
     });
     _controller = TextEditingController(text: widget.initialPrompt);
+    _loadAttachedFiles();
   }
 
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadAttachedFiles() async {
+    // Try backend first
+    try {
+      final files = await AgentProfileStore.instance.listFilesForAgent(
+        agentId: widget.agentId,
+      );
+      if (!mounted) return;
+      if (files.isNotEmpty) {
+        setState(() => _attachedFiles = files);
+        return;
+      }
+    } catch (_) {}
+
+    // Fallback: load from local config (always in sync after uploads)
+    try {
+      final config = await AgentProfileStore.instance.loadConfig();
+      final agent = config.agents
+          .where((a) => a.id == widget.agentId)
+          .firstOrNull;
+      if (!mounted) return;
+      setState(() => _attachedFiles = agent?.attachedFiles ?? []);
+    } catch (_) {}
+  }
+
+  Future<void> _pickAndAttachFile() async {
+    final result = await FilePicker.platform.pickFiles(
+      type: FileType.custom,
+      allowedExtensions: ['pdf', 'txt', 'docx'],
+    );
+    if (result == null || result.files.isEmpty) return;
+    final path = result.files.single.path;
+    if (path == null) return;
+
+    setState(() {
+      _isProcessingFile = true;
+      _fileError = null;
+    });
+    try {
+      final ref = await AgentProfileStore.instance.addFileToAgent(
+        agentId: widget.agentId,
+        filePath: path,
+      );
+      if (!mounted) return;
+      setState(() {
+        _attachedFiles = [..._attachedFiles, ref];
+        _isProcessingFile = false;
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() {
+        _isProcessingFile = false;
+        _fileError = e.toString();
+      });
+    }
+  }
+
+  Future<void> _removeFile(AttachedFileRef file) async {
+    try {
+      await AgentProfileStore.instance.removeFileFromAgent(
+        agentId: widget.agentId,
+        fileId: file.id,
+      );
+      if (!mounted) return;
+      setState(() {
+        _attachedFiles =
+            _attachedFiles.where((f) => f.id != file.id).toList();
+      });
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _fileError = e.toString());
+    }
   }
 
   Future<void> _savePrompt() async {
@@ -242,6 +321,82 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
                         ),
                       ),
                     ),
+                    if (widget.canEditPrompt) ...[
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Text(
+                            'Archivos adjuntos (${_attachedFiles.length})',
+                            style: const TextStyle(
+                              fontWeight: FontWeight.w600,
+                              fontSize: 14,
+                            ),
+                          ),
+                          const Spacer(),
+                          if (_isProcessingFile)
+                            const SizedBox(
+                              width: 20,
+                              height: 20,
+                              child: CircularProgressIndicator(
+                                strokeWidth: 2,
+                              ),
+                            )
+                          else
+                            IconButton(
+                              onPressed: _pickAndAttachFile,
+                              icon: const Icon(Icons.attach_file_rounded),
+                              tooltip: 'Adjuntar archivo (PDF, TXT, DOCX)',
+                            ),
+                        ],
+                      ),
+                      if (_fileError != null) ...[
+                        const SizedBox(height: 4),
+                        Text(
+                          _fileError!,
+                          style: TextStyle(
+                            color: Theme.of(context).colorScheme.error,
+                            fontSize: 12,
+                          ),
+                        ),
+                      ],
+                      for (final file in _attachedFiles)
+                        Padding(
+                          padding: const EdgeInsets.only(top: 6),
+                          child: Row(
+                            children: [
+                              Icon(
+                                _fileTypeIcon(file.fileType),
+                                size: 18,
+                                color: Colors.white70,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Text(
+                                  file.fileName,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(fontSize: 13),
+                                ),
+                              ),
+                              Text(
+                                '${file.chunkCount} chunks',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  color: Colors.white.withValues(alpha: 0.5),
+                                ),
+                              ),
+                              IconButton(
+                                onPressed: () => _removeFile(file),
+                                icon: const Icon(
+                                  Icons.close_rounded,
+                                  size: 16,
+                                ),
+                                tooltip: 'Eliminar archivo',
+                                visualDensity: VisualDensity.compact,
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
                     const SizedBox(height: 12),
                     SizedBox(
                       width: double.infinity,
@@ -262,6 +417,19 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
         ),
       ),
     );
+  }
+}
+
+IconData _fileTypeIcon(String fileType) {
+  switch (fileType.toLowerCase()) {
+    case 'pdf':
+      return Icons.picture_as_pdf_rounded;
+    case 'docx':
+      return Icons.description_rounded;
+    case 'txt':
+      return Icons.text_snippet_rounded;
+    default:
+      return Icons.insert_drive_file_rounded;
   }
 }
 

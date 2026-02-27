@@ -10,9 +10,11 @@ import '../core/app_config.dart';
 import '../models/conversation.dart';
 import '../models/session_models.dart';
 import 'auth_session_manager.dart';
+import 'backend_data_api.dart';
 import 'conversation_store.dart';
 import 'openai_realtime_client.dart';
 import 'realtime_session_api.dart';
+import 'store_helpers.dart';
 
 class RecordingSessionController extends ChangeNotifier {
   // ── Dispose guard ───────────────────────────────────────────────────────
@@ -24,6 +26,7 @@ class RecordingSessionController extends ChangeNotifier {
 
   // ── Mutable config pushed by the widget before startListening ───────────
   String promptOverride = '';
+  String activeAgentId = '';
   bool micMixEnabled = false;
   String? lastSavedConversationId;
 
@@ -82,6 +85,8 @@ class RecordingSessionController extends ChangeNotifier {
   String _statusMessage = '';
   DateTime? _sessionStartedAt;
   DateTime? _sessionEndedAt;
+
+  String _ragContext = '';
 
   OpenAIRealtimeClient? _openAIClientMic;
   OpenAIRealtimeClient? _openAIClientSystem;
@@ -206,6 +211,16 @@ class RecordingSessionController extends ChangeNotifier {
         ? '${promptOverride.substring(0, 120)}...'
         : promptOverride;
     _addLog('Prompt activo: $promptPreview');
+
+    // RAG: fetch relevant document chunks before connecting
+    _ragContext = '';
+    if (activeAgentId.isNotEmpty) {
+      _addLog('Buscando contexto RAG para agente $activeAgentId...');
+      _ragContext = await _fetchRAGContext(promptOverride);
+      if (_ragContext.isNotEmpty) {
+        _addLog('Contexto RAG obtenido (${_ragContext.length} chars)');
+      }
+    }
 
     _openAIClientMic = OpenAIRealtimeClient(
       openAIKey: resolvedKey,
@@ -1062,10 +1077,49 @@ class RecordingSessionController extends ChangeNotifier {
   // INSTRUCTIONS / CONTEXT
   // ──────────────────────────────────────────────────────────────────────────
 
+  Future<String> _fetchRAGContext(String query) async {
+    if (activeAgentId.isEmpty || query.trim().isEmpty) return '';
+
+    try {
+      final api = BackendDataApi();
+      final chunks = await withAuthRetry<List<Map<String, dynamic>>>(
+        action: (token) => api.searchDocuments(
+          accessToken: token,
+          agentId: activeAgentId,
+          query: query,
+          limit: 5,
+        ),
+      );
+
+      if (chunks == null || chunks.isEmpty) return '';
+
+      final buf = StringBuffer();
+      buf.writeln('--- Documentos de referencia ---');
+      for (final chunk in chunks) {
+        final fileName = (chunk['fileName'] as String?) ?? '';
+        final text = (chunk['text'] as String?) ?? '';
+        if (text.trim().isEmpty) continue;
+        if (fileName.isNotEmpty) {
+          buf.writeln('[$fileName]:');
+        }
+        buf.writeln(text.trim());
+        buf.writeln();
+      }
+      return buf.toString().trim();
+    } catch (e) {
+      debugPrint('[RAG] Error fetching context: $e');
+      return '';
+    }
+  }
+
   String _buildSessionInstructions() {
     final buf = StringBuffer();
     if (promptOverride.trim().isNotEmpty) {
       buf.writeln(promptOverride.trim());
+      buf.writeln();
+    }
+    if (_ragContext.trim().isNotEmpty) {
+      buf.writeln(_ragContext.trim());
       buf.writeln();
     }
     buf.writeln('Responde siempre en español. Usa exactamente estas dos secciones:');

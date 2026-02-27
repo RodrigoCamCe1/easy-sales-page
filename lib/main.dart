@@ -109,6 +109,7 @@ Future<void> main(List<String> args) async {
 
     // ✅ Regla: si explícitamente dice settings => settings
     if (type == 'settings') {
+      await AuthSessionManager.instance.bootstrap();
       runApp(SettingsWindowApp(
         windowId: windowId,
         mainWindowId: arguments['mainWindowId'] as int? ?? 0,

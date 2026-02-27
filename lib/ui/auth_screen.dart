@@ -26,6 +26,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   _AuthMode _mode = _AuthMode.login;
   bool _loading = false;
+  bool _obscurePassword = true;
   String _status = '';
   String _devMagicLink = '';
 
@@ -302,7 +303,7 @@ class _AuthScreenState extends State<AuthScreen> {
                             const SizedBox(height: 12),
                             TextField(
                               controller: _passwordController,
-                              obscureText: true,
+                              obscureText: _obscurePassword,
                               enabled: !_loading,
                               decoration: InputDecoration(
                                 hintText: 'Tu contraseña',
@@ -310,6 +311,18 @@ class _AuthScreenState extends State<AuthScreen> {
                                 fillColor: const Color(0xFF0C121E),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(10),
+                                ),
+                                suffixIcon: IconButton(
+                                  onPressed: () => setState(
+                                    () => _obscurePassword = !_obscurePassword,
+                                  ),
+                                  icon: Icon(
+                                    _obscurePassword
+                                        ? Icons.visibility_off_rounded
+                                        : Icons.visibility_rounded,
+                                    color: Colors.white54,
+                                    size: 20,
+                                  ),
                                 ),
                               ),
                             ),

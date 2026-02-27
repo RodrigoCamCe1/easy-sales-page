@@ -98,6 +98,7 @@ class _RecordingBarState extends State<RecordingBar> {
     final active = await AgentProfileStore.instance.getActiveAgent();
     if (!mounted) return;
     _controller.promptOverride = active.composedPrompt;
+    _controller.activeAgentId = active.id;
     _controller.applyUpdatedPrompt();
     _addLog('Agente activo: ${active.name} (${active.mode})');
   }
@@ -131,8 +132,10 @@ class _RecordingBarState extends State<RecordingBar> {
       if (call.method == 'updatePrompt') {
         final args = call.arguments as Map?;
         final prompt = args?['prompt'] as String? ?? '';
+        final agentId = args?['agentId'] as String? ?? '';
         _controller.promptOverride =
             prompt.isEmpty ? systemPrompt : prompt;
+        _controller.activeAgentId = agentId;
         _controller.applyUpdatedPrompt();
       }
 

@@ -290,10 +290,12 @@ class OpenAIRealtimeClient {
       _assistantStreamMode ??= 'output_text';
       if (_assistantStreamMode != 'output_text') return;
 
-      final delta = _extractAnyText(payload);
-      if (delta.isNotEmpty) onDelta(delta);
-
-      if (type.endsWith('.done')) {
+      // .done events carry the FULL accumulated text, not a delta.
+      // Only forward actual deltas; .done just signals completion.
+      if (!type.endsWith('.done')) {
+        final delta = _extractAnyText(payload);
+        if (delta.isNotEmpty) onDelta(delta);
+      } else {
         _safeCompleteOnce(reason: type);
       }
       return;
@@ -304,23 +306,21 @@ class OpenAIRealtimeClient {
         type == 'response.output_item.done');
 
     if (isOutputItem) {
-      final delta = _extractAssistantDeltaFromOutputItem(payload);
-
-      if (delta.trim().isEmpty) {
-        if (type == 'response.output_item.done') {
-          _safeCompleteOnce(reason: type);
-        }
+      // .done carries full text, not a delta — only signal completion.
+      if (type == 'response.output_item.done') {
+        _safeCompleteOnce(reason: type);
         return;
       }
 
+      final delta = _extractAssistantDeltaFromOutputItem(payload);
+      if (delta.trim().isEmpty) return;
+
+      // Only lock stream mode when we have actual content,
+      // so .added (empty) doesn't block output_text deltas.
       _assistantStreamMode ??= 'output_item';
       if (_assistantStreamMode != 'output_item') return;
 
       onDelta(delta);
-
-      if (type == 'response.output_item.done') {
-        _safeCompleteOnce(reason: type);
-      }
       return;
     }
 
@@ -338,10 +338,11 @@ class OpenAIRealtimeClient {
       _assistantStreamMode ??= 'audio_transcript';
       if (_assistantStreamMode != 'audio_transcript') return;
 
-      final delta = _extractAnyText(payload);
-      if (delta.trim().isNotEmpty) onDelta(delta);
-
-      if (type.endsWith('.done')) {
+      // .done carries full text, not a delta — only forward actual deltas.
+      if (!type.endsWith('.done')) {
+        final delta = _extractAnyText(payload);
+        if (delta.trim().isNotEmpty) onDelta(delta);
+      } else {
         _safeCompleteOnce(reason: type);
       }
       return;
