@@ -1,6 +1,8 @@
 import 'dart:async';
+import 'dart:math';
 
 import 'package:flutter/foundation.dart';
+import 'package:url_launcher/url_launcher.dart';
 
 import '../models/auth_models.dart';
 import 'auth_api.dart';
@@ -133,6 +135,54 @@ class AuthSessionManager {
     final bundle = await _api.verifyMagicLink(token: token);
     await _applyBundle(bundle);
     return bundle;
+  }
+
+  /// Opens the browser for Google consent and polls until the user completes
+  /// sign-in or the 5-minute timeout expires.
+  /// Throws [AuthApiException] if the backend returns an error.
+  /// Throws [TimeoutException] if polling exceeds 5 minutes.
+  Future<AuthTokenBundle> signInWithGoogle() async {
+    final state = _generateUuid();
+    final consentUrl = await _api.googleInit(state: state);
+    if (consentUrl.isEmpty) {
+      throw AuthApiException(message: 'No se recibió URL de consentimiento de Google.');
+    }
+
+    final uri = Uri.parse(consentUrl);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw AuthApiException(message: 'No se pudo abrir el navegador.');
+    }
+
+    const pollInterval = Duration(seconds: 2);
+    const maxWait = Duration(minutes: 5);
+    final deadline = DateTime.now().add(maxWait);
+
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(pollInterval);
+      try {
+        final bundle = await _api.googlePoll(state: state);
+        if (bundle != null) {
+          await _applyBundle(bundle);
+          return bundle;
+        }
+      } on AuthApiException {
+        rethrow;
+      } catch (_) {
+        // Network blip — keep polling
+      }
+    }
+
+    throw TimeoutException('Tiempo de espera agotado para Google Sign-In.', maxWait);
+  }
+
+  static String _generateUuid() {
+    final rng = Random.secure();
+    final bytes = List<int>.generate(16, (_) => rng.nextInt(256));
+    bytes[6] = (bytes[6] & 0x0f) | 0x40; // version 4
+    bytes[8] = (bytes[8] & 0x3f) | 0x80; // variant 1
+    String hex(int byte) => byte.toRadixString(16).padLeft(2, '0');
+    final h = bytes.map(hex).toList();
+    return '${h[0]}${h[1]}${h[2]}${h[3]}-${h[4]}${h[5]}-${h[6]}${h[7]}-${h[8]}${h[9]}-${h[10]}${h[11]}${h[12]}${h[13]}${h[14]}${h[15]}';
   }
 
   Future<bool> refreshWithStoredToken() async {

@@ -165,6 +165,32 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Future<void> _signInWithGoogle() async {
+    setState(() {
+      _loading = true;
+      _status = 'Abriendo Google en el navegador...';
+    });
+    try {
+      await AuthSessionManager.instance.signInWithGoogle();
+      _setStatus('Sesion iniciada con Google.');
+    } on AuthApiException catch (error) {
+      _setStatus(error.toString());
+    } catch (error) {
+      final msg = error.toString();
+      if (msg.contains('Tiempo de espera')) {
+        _setStatus('Tiempo de espera agotado. Intenta de nuevo.');
+      } else {
+        _setStatus('No se pudo iniciar sesion con Google.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
   void _setStatus(String message) {
     if (!mounted) return;
     setState(() {
@@ -412,10 +438,7 @@ class _AuthScreenState extends State<AuthScreen> {
                           SizedBox(
                             height: 48,
                             child: OutlinedButton.icon(
-                              onPressed: _loading
-                                  ? null
-                                  : () => _setStatus(
-                                      'Google login se habilita en el siguiente paso.'),
+                              onPressed: _loading ? null : _signInWithGoogle,
                               icon: const Text(
                                 'G',
                                 style: TextStyle(

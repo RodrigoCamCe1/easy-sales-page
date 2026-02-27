@@ -35,6 +35,7 @@ class AgentProfileStore {
 
     if (await legacy.exists() && !await scoped.exists()) {
       await legacy.copy(scoped.path);
+      await legacy.rename(p.join(dir.path, 'agents_config.json.migrated'));
     }
 
     return scoped;
@@ -48,6 +49,9 @@ class AgentProfileStore {
 
     if (await promptFile.exists() && !await userPrompt.exists()) {
       await promptFile.copy(userPrompt.path);
+      await promptFile.rename(
+        p.join(dir.path, '${p.basename(promptFile.path)}.migrated'),
+      );
     }
 
     return userPrompt;
@@ -81,6 +85,7 @@ class AgentProfileStore {
     final legacyConfig = await parseFile(legacy);
     if (legacyConfig != null && !await scoped.exists()) {
       await legacy.copy(scoped.path);
+      await legacy.rename(p.join(dir.path, 'agents_config.json.migrated'));
     }
     return legacyConfig;
   }

@@ -24,7 +24,10 @@ const envSchema = z.object({
   OPENAI_REALTIME_MODEL: z.string().default("gpt-4o-realtime-preview"),
   QDRANT_URL: z.string().min(1, "QDRANT_URL is required"),
   QDRANT_API_KEY: z.string().min(1, "QDRANT_API_KEY is required"),
-  OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small")
+  OPENAI_EMBEDDING_MODEL: z.string().default("text-embedding-3-small"),
+  BACKEND_PUBLIC_URL: z.string().url().default("http://localhost:4000"),
+  GOOGLE_CLIENT_ID: z.string().optional(),
+  GOOGLE_CLIENT_SECRET: z.string().optional()
 });
 
 const parsed = envSchema.safeParse(process.env);

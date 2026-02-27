@@ -106,6 +106,30 @@ class AuthApi {
     );
   }
 
+  /// Returns the Google consent URL for the given OAuth state.
+  Future<String> googleInit({required String state}) async {
+    final response = await _sendJson(
+      method: 'POST',
+      path: '/api/auth/google/init',
+      body: {'state': state},
+    );
+    return (response['consentUrl'] ?? '').toString();
+  }
+
+  /// Polls the backend for a completed Google OAuth flow.
+  /// Returns an [AuthTokenBundle] when the user completes consent, or null if still pending.
+  Future<AuthTokenBundle?> googlePoll({required String state}) async {
+    final response = await _sendJson(
+      method: 'GET',
+      path: '/api/auth/google/poll?state=${Uri.encodeComponent(state)}',
+    );
+    final status = (response['status'] ?? '').toString();
+    if (status == 'completed') {
+      return AuthTokenBundle.fromJson(response);
+    }
+    return null;
+  }
+
   Future<AuthUser?> me({
     required String accessToken,
   }) async {

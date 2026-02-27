@@ -9,6 +9,7 @@ import { Mailer } from "./mailer";
 import { runMigrations } from "./migrations";
 import { ensureCollection } from "./qdrant";
 import { authRoutes } from "./routes/auth";
+import { googleAuthRoutes } from "./routes/google-auth";
 import { dataRoutes } from "./routes/data";
 import { documentRoutes } from "./routes/documents";
 import { healthRoutes } from "./routes/health";
@@ -44,6 +45,7 @@ async function buildServer() {
 
   await fastify.register(healthRoutes, { prefix: "/api" });
   await fastify.register(authRoutes, { prefix: "/api/auth" });
+  await fastify.register(googleAuthRoutes, { prefix: "/api/auth/google" });
   await fastify.register(dataRoutes, { prefix: "/api/data" });
   await fastify.register(documentRoutes, { prefix: "/api/data/documents" });
   await fastify.register(realtimeRoutes, { prefix: "/api/realtime" });

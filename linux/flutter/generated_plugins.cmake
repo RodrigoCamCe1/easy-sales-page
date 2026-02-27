@@ -7,6 +7,7 @@ list(APPEND FLUTTER_PLUGIN_LIST
   flutter_audio_capture
   flutter_secure_storage_linux
   screen_retriever
+  url_launcher_linux
   window_manager
 )
 

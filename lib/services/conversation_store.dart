@@ -24,6 +24,8 @@ class ConversationStore {
 
     if (await legacy.exists() && !await scoped.exists()) {
       await legacy.copy(scoped.path);
+      // Rename legacy so it doesn't get copied to other users.
+      await legacy.rename(p.join(dir.path, 'conversations.json.migrated'));
     }
 
     return scoped;
@@ -51,6 +53,7 @@ class ConversationStore {
     final legacyItems = await parseFile(legacy);
     if (legacyItems.isNotEmpty && !await file.exists()) {
       await legacy.copy(file.path);
+      await legacy.rename(p.join(dir.path, 'conversations.json.migrated'));
     }
     return legacyItems;
   }
