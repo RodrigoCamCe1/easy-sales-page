@@ -210,6 +210,49 @@ class BackendDataApi {
         .toList();
   }
 
+  // ─── Google Calendar ─────────────────────────────────────────
+
+  Future<Map<String, dynamic>> getCalendarStatus({
+    required String accessToken,
+  }) async {
+    return _sendJson(
+      method: 'GET',
+      path: '/api/calendar/status',
+      accessToken: accessToken,
+    );
+  }
+
+  Future<List<Map<String, dynamic>>> getCalendarEvents({
+    required String accessToken,
+    String? date,
+  }) async {
+    final path =
+        date != null ? '/api/calendar/events?date=$date' : '/api/calendar/events';
+    final response = await _sendJson(
+      method: 'GET',
+      path: path,
+      accessToken: accessToken,
+    );
+    final raw = response['events'];
+    if (raw is! List) return [];
+    return raw
+        .whereType<Map>()
+        .map((item) => Map<String, dynamic>.from(item))
+        .toList();
+  }
+
+  Future<Map<String, dynamic>> createCalendarEvent({
+    required String accessToken,
+    required Map<String, dynamic> body,
+  }) async {
+    return _sendJson(
+      method: 'POST',
+      path: '/api/calendar/events',
+      accessToken: accessToken,
+      body: body,
+    );
+  }
+
   // ─── Internal helper ─────────────────────────────────────────
 
   Future<Map<String, dynamic>> _sendJson({

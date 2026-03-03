@@ -9,7 +9,9 @@ import '../models/conversation.dart';
 import '../pages/conversation_detail_page.dart';
 import '../services/agent_profile_store.dart';
 import '../services/auth_session_manager.dart';
+import '../services/backend_data_api.dart';
 import '../services/conversation_store.dart';
+import '../services/store_helpers.dart';
 import 'agents_screen.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -29,12 +31,18 @@ class _HomeScreenState extends State<HomeScreen> {
   WindowController? _barWindow;
   AgentProfile? _activeAgent;
 
+  // ── Calendar state ──
+  bool _calendarConnected = false;
+  bool _calendarLoading = false;
+  List<Map<String, dynamic>> _calendarEvents = [];
+
   @override
   void initState() {
     super.initState();
     _searchController.addListener(_onSearchChanged);
     _loadConversations();
     _loadActiveAgent();
+    _loadCalendarStatus();
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       // ⚠️ IGNORAR TODO lo que NO venga de la barra
       if (_barWindow == null || fromWindowId != _barWindow!.windowId) {
@@ -253,6 +261,186 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() {
       _activeAgent = active;
     });
+  }
+
+  // ── Calendar ──
+
+  Future<void> _loadCalendarStatus() async {
+    setState(() => _calendarLoading = true);
+    final api = BackendDataApi();
+
+    final status = await withAuthRetry<Map<String, dynamic>>(
+      action: (token) => api.getCalendarStatus(accessToken: token),
+      silent: true,
+    );
+
+    if (!mounted) return;
+
+    if (status == null || status['connected'] != true) {
+      setState(() {
+        _calendarConnected = false;
+        _calendarLoading = false;
+      });
+      return;
+    }
+
+    _calendarConnected = true;
+
+    final events = await withAuthRetry<List<Map<String, dynamic>>>(
+      action: (token) => api.getCalendarEvents(accessToken: token),
+      silent: true,
+    );
+
+    if (!mounted) return;
+    setState(() {
+      _calendarEvents = events ?? [];
+      _calendarLoading = false;
+    });
+  }
+
+  void _connectCalendar() {
+    // User needs to re-login with Google to authorize Calendar scope
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+            'Para conectar Calendar, cerrá sesión y volvé a iniciar con Google.'),
+        duration: Duration(seconds: 4),
+      ),
+    );
+  }
+
+  void _showCreateEventDialog() {
+    final titleCtrl = TextEditingController();
+    var selectedDate = DateTime.now();
+    var startTime = TimeOfDay.now();
+    var endTime =
+        TimeOfDay(hour: TimeOfDay.now().hour + 1, minute: TimeOfDay.now().minute);
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return StatefulBuilder(builder: (ctx, setDialogState) {
+          return AlertDialog(
+            title: const Text('Agendar reunion'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: titleCtrl,
+                  decoration:
+                      const InputDecoration(labelText: 'Titulo', isDense: true),
+                ),
+                const SizedBox(height: 12),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton.icon(
+                        icon: const Icon(Icons.calendar_today_rounded, size: 16),
+                        label: Text(
+                            '${selectedDate.day}/${selectedDate.month}/${selectedDate.year}'),
+                        onPressed: () async {
+                          final picked = await showDatePicker(
+                            context: ctx,
+                            initialDate: selectedDate,
+                            firstDate: DateTime.now(),
+                            lastDate:
+                                DateTime.now().add(const Duration(days: 365)),
+                          );
+                          if (picked != null) {
+                            setDialogState(() => selectedDate = picked);
+                          }
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () async {
+                          final picked = await showTimePicker(
+                              context: ctx, initialTime: startTime);
+                          if (picked != null) {
+                            setDialogState(() => startTime = picked);
+                          }
+                        },
+                        child: Text(
+                            '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}'),
+                      ),
+                    ),
+                    const Padding(
+                      padding: EdgeInsets.symmetric(horizontal: 8),
+                      child: Text('—'),
+                    ),
+                    Expanded(
+                      child: OutlinedButton(
+                        onPressed: () async {
+                          final picked = await showTimePicker(
+                              context: ctx, initialTime: endTime);
+                          if (picked != null) {
+                            setDialogState(() => endTime = picked);
+                          }
+                        },
+                        child: Text(
+                            '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}'),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: const Text('Cancelar'),
+              ),
+              ElevatedButton(
+                onPressed: () async {
+                  final title = titleCtrl.text.trim();
+                  if (title.isEmpty) return;
+
+                  Navigator.pop(ctx);
+
+                  final start = DateTime(
+                    selectedDate.year,
+                    selectedDate.month,
+                    selectedDate.day,
+                    startTime.hour,
+                    startTime.minute,
+                  );
+                  final end = DateTime(
+                    selectedDate.year,
+                    selectedDate.month,
+                    selectedDate.day,
+                    endTime.hour,
+                    endTime.minute,
+                  );
+
+                  final api = BackendDataApi();
+                  await withAuthRetry<Map<String, dynamic>>(
+                    action: (token) => api.createCalendarEvent(
+                      accessToken: token,
+                      body: {
+                        'title': title,
+                        'startDateTime': start.toUtc().toIso8601String(),
+                        'endDateTime': end.toUtc().toIso8601String(),
+                      },
+                    ),
+                    silent: true,
+                  );
+
+                  if (!mounted) return;
+                  _loadCalendarStatus();
+                },
+                child: const Text('Agendar'),
+              ),
+            ],
+          );
+        });
+      },
+    );
   }
 
   Future<void> _openRecordingBar() async {
@@ -599,10 +787,12 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 16),
                           Expanded(
                             flex: 2,
-                            child: _SmallCard(
-                              title: 'Recibe recordatorios',
-                              subtitle: 'Conecta tu calendario',
-                              buttonText: 'Conectar',
+                            child: _CalendarCard(
+                              connected: _calendarConnected,
+                              loading: _calendarLoading,
+                              events: _calendarEvents,
+                              onConnect: _connectCalendar,
+                              onCreateEvent: _showCreateEventDialog,
                             ),
                           ),
                         ],
@@ -826,52 +1016,164 @@ class _GradientCard extends StatelessWidget {
   }
 }
 
-class _SmallCard extends StatelessWidget {
-  const _SmallCard({
-    required this.title,
-    required this.subtitle,
-    required this.buttonText,
+class _CalendarCard extends StatelessWidget {
+  const _CalendarCard({
+    required this.connected,
+    required this.loading,
+    required this.events,
+    required this.onConnect,
+    required this.onCreateEvent,
   });
 
-  final String title;
-  final String subtitle;
-  final String buttonText;
+  final bool connected;
+  final bool loading;
+  final List<Map<String, dynamic>> events;
+  final VoidCallback onConnect;
+  final VoidCallback onCreateEvent;
+
+  String _formatTime(String? dateTimeStr) {
+    if (dateTimeStr == null) return '';
+    final dt = DateTime.tryParse(dateTimeStr);
+    if (dt == null) return dateTimeStr;
+    final local = dt.toLocal();
+    return '${local.hour.toString().padLeft(2, '0')}:${local.minute.toString().padLeft(2, '0')}';
+  }
 
   @override
   Widget build(BuildContext context) {
+    const calendarGreen = Color(0xFF4CAF50);
+
+    if (loading) {
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: const Center(child: CircularProgressIndicator()),
+      );
+    }
+
+    if (!connected) {
+      return Container(
+        padding: const EdgeInsets.all(18),
+        decoration: BoxDecoration(
+          color: Colors.white.withOpacity(0.06),
+          borderRadius: BorderRadius.circular(18),
+          border: Border.all(color: Colors.white.withOpacity(0.1)),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Text(
+              'Recibe recordatorios',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.w600,
+                color: Colors.white,
+              ),
+            ),
+            const SizedBox(height: 10),
+            const Text('Conecta tu calendario',
+                style: TextStyle(color: Colors.white70)),
+            const SizedBox(height: 12),
+            ElevatedButton(
+              onPressed: onConnect,
+              style: ElevatedButton.styleFrom(
+                backgroundColor: calendarGreen.withOpacity(0.2),
+                foregroundColor: Colors.white,
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(14)),
+              ),
+              child: const Text('Conectar'),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Connected — show today's events
     return Container(
       padding: const EdgeInsets.all(18),
       decoration: BoxDecoration(
         color: Colors.white.withOpacity(0.06),
         borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: Colors.white.withOpacity(0.1)),
+        border: Border.all(color: calendarGreen.withOpacity(0.2)),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 16,
-              fontWeight: FontWeight.w600,
-              color: Colors.white,
-            ),
+          Row(
+            children: [
+              const Icon(Icons.calendar_month_rounded,
+                  size: 16, color: calendarGreen),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'Eventos de hoy',
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w600,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+              GestureDetector(
+                onTap: onCreateEvent,
+                child: const Icon(Icons.add_rounded,
+                    size: 18, color: calendarGreen),
+              ),
+            ],
           ),
           const SizedBox(height: 10),
-          Text(subtitle, style: const TextStyle(color: Colors.white70)),
-          const SizedBox(height: 12),
-          ElevatedButton(
-            onPressed: () {},
-            style: ElevatedButton.styleFrom(
-              backgroundColor: Colors.white.withOpacity(0.12),
-              foregroundColor: Colors.white,
-              padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
-              shape: RoundedRectangleBorder(
-                borderRadius: BorderRadius.circular(14),
-              ),
+          if (events.isEmpty)
+            const Text('No hay eventos para hoy',
+                style: TextStyle(color: Colors.white54, fontSize: 13))
+          else
+            ...events.take(3).map((event) {
+              final title = event['title'] as String? ?? '(Sin titulo)';
+              final startStr = event['startDateTime'] as String?;
+              return Padding(
+                padding: const EdgeInsets.only(bottom: 6),
+                child: Row(
+                  children: [
+                    Container(
+                      width: 3,
+                      height: 24,
+                      decoration: BoxDecoration(
+                        color: calendarGreen,
+                        borderRadius: BorderRadius.circular(2),
+                      ),
+                    ),
+                    const SizedBox(width: 8),
+                    if (startStr != null) ...[
+                      Text(
+                        _formatTime(startStr),
+                        style: const TextStyle(
+                            color: Colors.white54, fontSize: 12),
+                      ),
+                      const SizedBox(width: 8),
+                    ],
+                    Expanded(
+                      child: Text(
+                        title,
+                        style: const TextStyle(
+                            color: Colors.white, fontSize: 13),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                  ],
+                ),
+              );
+            }),
+          if (events.length > 3)
+            Text(
+              '+${events.length - 3} más',
+              style: const TextStyle(color: Colors.white38, fontSize: 12),
             ),
-            child: Text(buttonText),
-          ),
         ],
       ),
     );

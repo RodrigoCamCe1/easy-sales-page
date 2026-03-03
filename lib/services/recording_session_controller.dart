@@ -28,6 +28,7 @@ class RecordingSessionController extends ChangeNotifier {
   String promptOverride = '';
   String activeAgentId = '';
   bool micMixEnabled = false;
+  bool freestyleMode = false;
   String? lastSavedConversationId;
 
   // ── Scroll / platform callbacks wired by widget in initState ────────────
@@ -494,6 +495,7 @@ class RecordingSessionController extends ChangeNotifier {
         role: 'assistant',
         text: '',
         assistantTurnId: _activeAssistantTurnId,
+        isFreestyle: freestyleMode,
       ));
       _streamingAssistantIndex = _chatResponses.length - 1;
     }
@@ -506,6 +508,7 @@ class RecordingSessionController extends ChangeNotifier {
         role: 'assistant',
         text: visible.isEmpty ? '...' : visible,
         assistantTurnId: _activeAssistantTurnId,
+        isFreestyle: freestyleMode,
       );
     }
 
@@ -669,6 +672,7 @@ class RecordingSessionController extends ChangeNotifier {
             role: 'assistant',
             text: fallback,
             assistantTurnId: _activeAssistantTurnId,
+            isFreestyle: freestyleMode,
           );
         }
       }
@@ -686,6 +690,7 @@ class RecordingSessionController extends ChangeNotifier {
           role: 'assistant',
           text: line,
           assistantTurnId: _activeAssistantTurnId,
+          isFreestyle: freestyleMode,
         ));
       }
     }
@@ -1112,6 +1117,12 @@ class RecordingSessionController extends ChangeNotifier {
     }
   }
 
+  void toggleFreestyleMode() {
+    freestyleMode = !freestyleMode;
+    applyUpdatedPrompt();
+    _safeNotify();
+  }
+
   String _buildSessionInstructions() {
     final buf = StringBuffer();
     if (promptOverride.trim().isNotEmpty) {
@@ -1120,6 +1131,10 @@ class RecordingSessionController extends ChangeNotifier {
     }
     if (_ragContext.trim().isNotEmpty) {
       buf.writeln(_ragContext.trim());
+      buf.writeln();
+    }
+    if (freestyleMode) {
+      buf.writeln('MODO LIBRE ACTIVADO: Puedes responder usando tu conocimiento general, sin limitarte al documento ni al prompt. Está permitido especular o extrapolar información cuando sea útil para el vendedor.');
       buf.writeln();
     }
     buf.writeln('Responde siempre en español. Usa exactamente estas dos secciones:');

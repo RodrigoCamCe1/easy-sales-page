@@ -450,6 +450,15 @@ class _RecordingBarState extends State<RecordingBar> {
                                   icon: Icons.mic_rounded,
                                   onTap: _toggleTranscript,
                                 ),
+                                _QuickChip(
+                                  label: _controller.freestyleMode
+                                      ? 'Modo libre ON'
+                                      : 'Modo libre',
+                                  icon: Icons.auto_fix_high_rounded,
+                                  onTap: _controller.toggleFreestyleMode,
+                                  activeColor: const Color(0xFFE53935),
+                                  isActive: _controller.freestyleMode,
+                                ),
                               ],
                             ),
                           ),
@@ -532,16 +541,19 @@ class _RecordingBarState extends State<RecordingBar> {
                               Expanded(
                                 child: _showTranscript
                                     ? _TranscriptionPane(
-                                        controller: _transcriptScrollController,
-                                        entries:
-                                            _controller.buildTranscriptEntries(),
+                                        controller:
+                                            _transcriptScrollController,
+                                        entries: _controller
+                                            .buildTranscriptEntries(),
                                         emptyText:
                                             'Esperando audio para transcribir',
                                       )
                                     : _ChatPane(
                                         controller: _chatScrollController,
-                                        messages: _controller.chatResponses,
-                                        emptyText: _controller.statusMessage,
+                                        messages:
+                                            _controller.chatResponses,
+                                        emptyText:
+                                            _controller.statusMessage,
                                         isThinking:
                                             _controller.responseInFlight,
                                       ),
@@ -563,34 +575,48 @@ class _RecordingBarState extends State<RecordingBar> {
 }
 
 class _QuickChip extends StatelessWidget {
-  const _QuickChip({required this.label, required this.icon, this.onTap});
+  const _QuickChip({
+    required this.label,
+    required this.icon,
+    this.onTap,
+    this.activeColor,
+    this.isActive = false,
+  });
 
   final String label;
   final IconData icon;
   final VoidCallback? onTap;
+  final Color? activeColor;
+  final bool isActive;
 
   @override
   Widget build(BuildContext context) {
     final colorScheme = Theme.of(context).colorScheme;
+    final effectiveColor = isActive && activeColor != null ? activeColor! : null;
     final chip = Container(
       margin: const EdgeInsets.only(right: 8),
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
       decoration: BoxDecoration(
-        color: colorScheme.surfaceVariant.withOpacity(0.5),
+        color: effectiveColor != null
+            ? effectiveColor.withOpacity(0.15)
+            : colorScheme.surfaceVariant.withOpacity(0.5),
         borderRadius: BorderRadius.circular(18),
         border: Border.all(
-          color: colorScheme.outlineVariant.withOpacity(0.6),
+          color: effectiveColor != null
+              ? effectiveColor.withOpacity(0.7)
+              : colorScheme.outlineVariant.withOpacity(0.6),
         ),
       ),
       child: Row(
         mainAxisSize: MainAxisSize.min,
         children: [
-          Icon(icon, size: 14, color: colorScheme.onSurfaceVariant),
+          Icon(icon, size: 14,
+              color: effectiveColor ?? colorScheme.onSurfaceVariant),
           const SizedBox(width: 6),
           Text(
             label,
             style: Theme.of(context).textTheme.labelSmall?.copyWith(
-                  color: colorScheme.onSurfaceVariant,
+                  color: effectiveColor ?? colorScheme.onSurfaceVariant,
                 ),
           ),
         ],
@@ -875,6 +901,8 @@ class _ChatPane extends StatelessWidget {
         final currentAssistantTurnId = isThinkingRow
             ? latestAssistantTurnId
             : messages[index].assistantTurnId;
+        final isFreestyle = !isThinkingRow && messages[index].isFreestyle;
+        const freestyleRed = Color(0xFFE53935);
 
         return Align(
           alignment: isAssistant ? Alignment.centerLeft : Alignment.centerRight,
@@ -883,27 +911,58 @@ class _ChatPane extends StatelessWidget {
             padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             constraints: const BoxConstraints(maxWidth: 560),
             decoration: BoxDecoration(
-              color: isAssistant
-                  ? ((latestAssistantTurnId != null &&
-                          currentAssistantTurnId == latestAssistantTurnId)
-                      ? colorScheme.primary.withOpacity(0.4)
-                      : (previousAssistantTurnId != null &&
-                              currentAssistantTurnId == previousAssistantTurnId)
-                          ? colorScheme.primary.withOpacity(0.24)
-                          : colorScheme.surfaceVariant.withOpacity(0.56))
-                  : colorScheme.primary.withOpacity(0.36),
+              color: isFreestyle
+                  ? freestyleRed.withOpacity(0.12)
+                  : isAssistant
+                      ? ((latestAssistantTurnId != null &&
+                              currentAssistantTurnId == latestAssistantTurnId)
+                          ? colorScheme.primary.withOpacity(0.4)
+                          : (previousAssistantTurnId != null &&
+                                  currentAssistantTurnId ==
+                                      previousAssistantTurnId)
+                              ? colorScheme.primary.withOpacity(0.24)
+                              : colorScheme.surfaceVariant.withOpacity(0.56))
+                      : colorScheme.primary.withOpacity(0.36),
               borderRadius: BorderRadius.circular(14),
               border: Border.all(
-                color: colorScheme.outlineVariant.withOpacity(0.54),
+                color: isFreestyle
+                    ? freestyleRed.withOpacity(0.6)
+                    : colorScheme.outlineVariant.withOpacity(0.54),
               ),
             ),
-            child: Text(
-              _fixMojibake(text),
-              style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                    color: colorScheme.onSurface,
-                    fontStyle:
-                        isThinkingRow ? FontStyle.italic : FontStyle.normal,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                if (isFreestyle)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 4),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.auto_fix_high_rounded,
+                            size: 11, color: freestyleRed.withOpacity(0.8)),
+                        const SizedBox(width: 4),
+                        Text(
+                          'Modo libre · puede contener info no verificada',
+                          style:
+                              Theme.of(context).textTheme.labelSmall?.copyWith(
+                                    color: freestyleRed.withOpacity(0.8),
+                                    fontSize: 10,
+                                  ),
+                        ),
+                      ],
+                    ),
                   ),
+                Text(
+                  _fixMojibake(text),
+                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                        color: colorScheme.onSurface,
+                        fontStyle:
+                            isThinkingRow ? FontStyle.italic : FontStyle.normal,
+                      ),
+                ),
+              ],
             ),
           ),
         );

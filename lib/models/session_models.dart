@@ -3,6 +3,7 @@ class ChatMessage {
     required this.role,
     required this.text,
     this.assistantTurnId,
+    this.isFreestyle = false,
     DateTime? at,
   }) : at = at ?? DateTime.now();
 
@@ -10,12 +11,14 @@ class ChatMessage {
   final String role;
   final String text;
   final int? assistantTurnId;
+  final bool isFreestyle;
   final DateTime at;
 
-  ChatMessage copyWith({String? text}) => ChatMessage(
+  ChatMessage copyWith({String? text, bool? isFreestyle}) => ChatMessage(
         role: role,
         text: text ?? this.text,
         assistantTurnId: assistantTurnId,
+        isFreestyle: isFreestyle ?? this.isFreestyle,
         at: at,
       );
 }
