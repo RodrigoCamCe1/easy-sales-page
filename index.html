@@ -26,7 +26,7 @@
       </a>
       <div class="nav-links">
         <a href="#features">Funciones</a>
-        <a href="#demo">Demo</a>
+        <a href="#gallery">Galeria</a>
         <a href="#download" class="nav-cta">Descargar</a>
       </div>
     </div>
@@ -44,7 +44,7 @@
           <svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor"><path d="M0 3.449L9.75 2.1v9.451H0m10.949-9.602L24 0v11.4H10.949M0 12.6h9.75v9.451L0 20.699M10.949 12.6H24V24l-13.051-1.851"/></svg>
           Descargar para Windows
         </a>
-        <a href="#demo" class="btn-secondary">Ver demo</a>
+        <a href="#gallery" class="btn-secondary">Ver capturas</a>
       </div>
       <p class="hero-meta">Windows 10/11 &middot; Gratis &middot; <span class="version-tag">v1.1.0</span></p>
     </div>
@@ -58,20 +58,34 @@
     </div>
   </section>
 
-  <!-- Demo -->
-  <section id="demo" class="demo-section">
+  <!-- Gallery -->
+  <section id="gallery" class="demo-section">
     <div class="container">
       <div class="section-header animate-on-scroll">
-        <span class="section-tag">Mira c&oacute;mo funciona</span>
+        <span class="section-tag">Capturas de pantalla</span>
         <h2>AsesorIA en acci&oacute;n</h2>
       </div>
-      <div class="demo-container animate-on-scroll">
-        <div class="demo-player">
-          <div class="demo-placeholder">
-            <div class="play-button">
-              <svg width="32" height="32" viewBox="0 0 24 24" fill="white"><polygon points="8,5 19,12 8,19"/></svg>
-            </div>
-            <p>Video demo pr&oacute;ximamente</p>
+      <div class="gallery-grid animate-on-scroll">
+        <div class="gallery-item">
+          <!-- Reemplazar src con tu screenshot -->
+          <img src="assets/screenshot-home.png" alt="Pantalla principal de AsesorIA" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="gallery-placeholder">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(92,178,255,0.4)" stroke-width="1.5"><rect x="2" y="3" width="20" height="14" rx="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
+            <span>Pantalla principal</span>
+          </div>
+        </div>
+        <div class="gallery-item">
+          <img src="assets/screenshot-recording.png" alt="Barra de grabaci&oacute;n con coaching IA" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="gallery-placeholder">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(92,178,255,0.4)" stroke-width="1.5"><path d="M12 1a3 3 0 0 0-3 3v8a3 3 0 0 0 6 0V4a3 3 0 0 0-3-3z"/><path d="M19 10v2a7 7 0 0 1-14 0v-2"/></svg>
+            <span>Barra de grabaci&oacute;n</span>
+          </div>
+        </div>
+        <div class="gallery-item">
+          <img src="assets/screenshot-calendar.png" alt="Integraci&oacute;n con Google Calendar" onerror="this.style.display='none';this.nextElementSibling.style.display='flex'">
+          <div class="gallery-placeholder">
+            <svg width="40" height="40" viewBox="0 0 24 24" fill="none" stroke="rgba(92,178,255,0.4)" stroke-width="1.5"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+            <span>Google Calendar</span>
           </div>
         </div>
       </div>
