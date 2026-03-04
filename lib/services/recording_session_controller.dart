@@ -5,6 +5,7 @@ import 'dart:math' as math;
 import 'dart:typed_data';
 
 import 'package:flutter/foundation.dart';
+import 'package:path/path.dart' as p;
 
 import '../core/app_config.dart';
 import '../models/conversation.dart';
@@ -1010,7 +1011,8 @@ class RecordingSessionController extends ChangeNotifier {
         '-',
       ];
 
-      final process = await Process.start('ffmpeg', args);
+      final ffmpegPath = _resolveFfmpeg();
+      final process = await Process.start(ffmpegPath, args);
       final subscription = process.stdout.listen(
         (chunk) => onChunk(Uint8List.fromList(chunk)),
         onDone: () => _addLog('ffmpeg ($label) stdout cerrado'),
@@ -1042,6 +1044,14 @@ class RecordingSessionController extends ChangeNotifier {
       _listening = false;
       _safeNotify();
     }
+  }
+
+  /// Returns the path to ffmpeg — bundled (next to the exe) if available, otherwise falls back to PATH.
+  String _resolveFfmpeg() {
+    final exeDir = p.dirname(Platform.resolvedExecutable);
+    final bundled = p.join(exeDir, 'ffmpeg.exe');
+    if (File(bundled).existsSync()) return bundled;
+    return 'ffmpeg';
   }
 
   Future<void> _stopWindowsCapture() async {

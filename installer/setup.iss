@@ -2,7 +2,7 @@
 ; Generates a Windows installer for the Flutter desktop app
 
 #define MyAppName "AsesorIA"
-#define MyAppVersion "1.1.0"
+#define MyAppVersion "1.2.0"
 #define MyAppPublisher "EasySales IA"
 #define MyAppExeName "AsesorIA.exe"
 
@@ -29,6 +29,7 @@ Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
 
 [Files]
 Source: "..\build\windows\x64\runner\Release\*"; DestDir: "{app}"; Flags: recursesubdirs createallsubdirs
+Source: "bundled\ffmpeg.exe"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
 Name: "{group}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"
