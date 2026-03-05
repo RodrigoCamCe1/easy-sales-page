@@ -130,6 +130,27 @@ class AuthApi {
     return null;
   }
 
+  Future<String> githubInit({required String state}) async {
+    final response = await _sendJson(
+      method: 'POST',
+      path: '/api/auth/github/init',
+      body: {'state': state},
+    );
+    return (response['consentUrl'] ?? '').toString();
+  }
+
+  Future<AuthTokenBundle?> githubPoll({required String state}) async {
+    final response = await _sendJson(
+      method: 'GET',
+      path: '/api/auth/github/poll?state=${Uri.encodeComponent(state)}',
+    );
+    final status = (response['status'] ?? '').toString();
+    if (status == 'completed') {
+      return AuthTokenBundle.fromJson(response);
+    }
+    return null;
+  }
+
   Future<AuthUser?> me({
     required String accessToken,
   }) async {

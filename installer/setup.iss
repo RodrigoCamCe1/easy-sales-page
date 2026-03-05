@@ -2,7 +2,7 @@
 ; Generates a Windows installer for the Flutter desktop app
 
 #define MyAppName "AsesorIA"
-#define MyAppVersion "1.2.0"
+#define MyAppVersion "1.2.2"
 #define MyAppPublisher "EasySales IA"
 #define MyAppExeName "AsesorIA.exe"
 

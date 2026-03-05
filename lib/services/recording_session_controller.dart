@@ -70,7 +70,7 @@ class RecordingSessionController extends ChangeNotifier {
   int? _streamingAssistantIndex;
   String _streamingAssistantText = '';
   bool _assistantStreamStarted = false;
-  DateTime? _lastLevelLogAt;
+  // _lastLevelLogSystem / _lastLevelLogMic live near _logAudioLevel
 
   String _currentResponse = '';
   final List<ChatMessage> _chatResponses = [];
@@ -81,6 +81,7 @@ class RecordingSessionController extends ChangeNotifier {
   String? _lastSysLine;
   String? _lastMicLine;
   DateTime? _lastMicTranscriptAt;
+  DateTime? _lastSysTranscriptAt;
   int _systemWordsAccum = 0;
   int _systemWordsAtLastResponse = 0;
 
@@ -157,13 +158,15 @@ class RecordingSessionController extends ChangeNotifier {
   Future<void> startListening() async {
     if (_listening) return;
 
-    final resolvedKey = await _resolveOpenAIToken();
-    if (resolvedKey.isEmpty) {
+    // Ephemeral tokens are single-use; each OpenAI client needs its own.
+    final micKey = await _resolveOpenAIToken();
+    if (micKey.isEmpty) {
       _statusMessage =
           'No se pudo obtener credenciales de OpenAI. Configura OPENAI_API_KEY en el backend.';
       _safeNotify();
       return;
     }
+    final systemKey = await _resolveOpenAIToken();
 
     await _openAIClientMic?.close();
     await _openAIClientSystem?.close();
@@ -225,7 +228,7 @@ class RecordingSessionController extends ChangeNotifier {
     }
 
     _openAIClientMic = OpenAIRealtimeClient(
-      openAIKey: resolvedKey,
+      openAIKey: micKey,
       model: openAIRealtimeModel,
       vadSilenceMs: vadSilenceMs,
       transcriptionOnly: true,
@@ -241,7 +244,7 @@ class RecordingSessionController extends ChangeNotifier {
         Platform.isWindows && windowsAudioDevice.trim().isNotEmpty;
     if (hasSystemDevice) {
       _openAIClientSystem = OpenAIRealtimeClient(
-        openAIKey: resolvedKey,
+        openAIKey: systemKey.isNotEmpty ? systemKey : micKey,
         model: openAIRealtimeModel,
         vadSilenceMs: vadSilenceMs,
         sessionInstructions: _buildSessionInstructions(),
@@ -550,8 +553,11 @@ class RecordingSessionController extends ChangeNotifier {
           }
         } else {
           if (_lastSysLine != tagged) {
-            _transcripts.add(tagged);
+            final now = DateTime.now();
+            final merged = _tryMergeSysTranscript(cleaned, now);
+            if (!merged) _transcripts.add(tagged);
             _lastSysLine = tagged;
+            _lastSysTranscriptAt = now;
             _lastMicTranscriptAt = null;
             _systemWordsAccum += _wordCount(normalized);
             _triggerResponseFromTranscript(
@@ -798,8 +804,8 @@ class RecordingSessionController extends ChangeNotifier {
     required String source,
     required String transcriptLine,
   }) {
-    if (!_listening) return;
     final normalizedSource = source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
+    if (!_listening) return;
     if (normalizedSource != 'sys') return;
 
     final cleanedLine = transcriptLine.trim();
@@ -825,7 +831,6 @@ class RecordingSessionController extends ChangeNotifier {
         novelWords < _novelSystemWordsToBypassCooldown) {
       return;
     }
-
     _lastVoiceTriggerAt = now;
     _lastVoiceTriggerKey = key;
     _systemWordsAtLastResponse = _systemWordsAccum;
@@ -886,7 +891,7 @@ class RecordingSessionController extends ChangeNotifier {
   void _appendAudio(Uint8List bytes) {
     _pendingMicBytes += bytes.length;
     _openAIClientMic?.appendAudio(bytes);
-    _logAudioLevel(bytes);
+    _logAudioLevel(bytes, label: 'mic');
   }
 
   Future<void> _flushRealtimeBoth() async {
@@ -896,7 +901,7 @@ class RecordingSessionController extends ChangeNotifier {
   }
 
   Future<void> _maybeCommitSystem() async {
-    const minCommitBytesSystem = 4600;
+    const minCommitBytesSystem = 7200; // 24kHz * 2B * 150ms
     if (_openAIClientSystem == null) return;
     if (_pendingSystemBytes < minCommitBytesSystem) return;
     final committed = await _openAIClientSystem?.commitBuffer() ?? false;
@@ -904,7 +909,7 @@ class RecordingSessionController extends ChangeNotifier {
   }
 
   Future<void> _maybeCommitMic() async {
-    const minCommitBytesMic = 4600;
+    const minCommitBytesMic = 7200; // 24kHz * 2B * 150ms
     if (_openAIClientMic == null) return;
     if (_pendingMicBytes < minCommitBytesMic) return;
     final committed = await _openAIClientMic?.commitBuffer() ?? false;
@@ -951,7 +956,7 @@ class RecordingSessionController extends ChangeNotifier {
       onChunk: (bytes) {
         _pendingSystemBytes += bytes.length;
         _openAIClientSystem?.appendAudio(bytes);
-        _logAudioLevel(bytes);
+        _logAudioLevel(bytes, label: 'system');
       },
     );
 
@@ -968,10 +973,11 @@ class RecordingSessionController extends ChangeNotifier {
       await _startWindowsDeviceCapture(
         label: 'mic',
         device: micDevice,
+        useInputSampleRate: false,
         onChunk: (bytes) {
           _pendingMicBytes += bytes.length;
           _openAIClientMic?.appendAudio(bytes);
-          _logAudioLevel(bytes);
+          _logAudioLevel(bytes, label: 'mic');
         },
       );
     }
@@ -987,13 +993,14 @@ class RecordingSessionController extends ChangeNotifier {
     required String device,
     required void Function(Uint8List) onChunk,
     bool loopback = false,
+    bool useInputSampleRate = true,
   }) async {
     try {
-      _addLog('Captura $label: $device');
+      _addLog('Captura $label: $device (sampleRate=${useInputSampleRate ? windowsAudioSampleRate : "default"})');
       final args = <String>[
         '-f',
         windowsAudioBackend,
-        if (windowsAudioSampleRate.isNotEmpty) ...[
+        if (useInputSampleRate && windowsAudioSampleRate.isNotEmpty) ...[
           '-sample_rate',
           windowsAudioSampleRate,
         ],
@@ -1005,7 +1012,7 @@ class RecordingSessionController extends ChangeNotifier {
         '-ac',
         '1',
         '-ar',
-        '16000',
+        '24000',
         '-f',
         's16le',
         '-',
@@ -1032,10 +1039,16 @@ class RecordingSessionController extends ChangeNotifier {
 
       process.exitCode.then((code) {
         _addLog('ffmpeg ($label) finalizo con codigo $code');
+        if (code != 0) {
+          _addLog('⚠️ ffmpeg ($label) salió con error $code — revisa dispositivo/configuración');
+        }
       });
 
       process.stderr.transform(const Utf8Decoder()).listen((line) {
-        if (showFfmpegLogs) _addLog('ffmpeg ($label) stderr: $line');
+        // Always log mic stderr so mic failures are visible
+        if (showFfmpegLogs || label == 'mic') {
+          _addLog('ffmpeg ($label) stderr: $line');
+        }
       });
     } catch (error) {
       _addLog('ffmpeg ($label) no se pudo iniciar: $error');
@@ -1156,6 +1169,16 @@ class RecordingSessionController extends ChangeNotifier {
   }
 
   String _buildRecentContext({int maxLines = 3}) {
+    final buf = StringBuffer();
+
+    // 1) Instrucciones del agente + RAG (response.create sobreescribe session)
+    final sessionInstr = _buildSessionInstructions().trim();
+    if (sessionInstr.isNotEmpty) {
+      buf.writeln(sessionInstr);
+      buf.writeln();
+    }
+
+    // 2) Transcripción reciente del sistema
     final sysLines = <String>[];
     for (final t in _transcripts) {
       final trimmed = t.trim();
@@ -1167,11 +1190,15 @@ class RecordingSessionController extends ChangeNotifier {
           .trim();
       if (text.isNotEmpty) sysLines.add(text);
     }
-    if (sysLines.isEmpty) return '';
-    final recent = sysLines.length > maxLines
-        ? sysLines.sublist(sysLines.length - maxLines)
-        : sysLines;
-    return 'Contexto reciente de la conversación:\n${recent.join('\n')}';
+    if (sysLines.isNotEmpty) {
+      final recent = sysLines.length > maxLines
+          ? sysLines.sublist(sysLines.length - maxLines)
+          : sysLines;
+      buf.writeln('Contexto reciente de la conversación:');
+      buf.writeln(recent.join('\n'));
+    }
+
+    return buf.toString().trim();
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1368,8 +1395,10 @@ class RecordingSessionController extends ChangeNotifier {
     final lower = t.toLowerCase();
     final looksLikeContext = lower == '###' ||
         lower.startsWith('context:') ||
+        lower.startsWith('contexto:') ||
         lower.startsWith('###context') ||
-        lower == 'context';
+        lower == 'context' ||
+        lower == 'contexto';
     final looksLikeInstruction =
         lower.contains('transcribe únicamente en español') ||
             lower.contains('transcribe unicamente en espanol');
@@ -1483,6 +1512,30 @@ class RecordingSessionController extends ChangeNotifier {
   // TRANSCRIPT HELPERS
   // ──────────────────────────────────────────────────────────────────────────
 
+  static const Duration _sysTranscriptMergeWindow = Duration(seconds: 8);
+
+  bool _tryMergeSysTranscript(String cleaned, DateTime now) {
+    if (_transcripts.isEmpty) return false;
+    final lastIndex = _transcripts.length - 1;
+    final last = _transcripts[lastIndex].trim();
+    if (!last.startsWith('🖥️ ')) return false;
+    if (_lastSysTranscriptAt == null ||
+        now.difference(_lastSysTranscriptAt!) > _sysTranscriptMergeWindow) {
+      return false;
+    }
+    final previous = last.replaceFirst(RegExp(r'^🖥️\s*'), '').trim();
+    if (previous.isEmpty) return false;
+    final prevKey = previous.toLowerCase();
+    final nextKey = cleaned.trim().toLowerCase();
+    if (nextKey.isEmpty) return false;
+    if (prevKey == nextKey || prevKey.contains(nextKey)) return true;
+    final merged = nextKey.contains(prevKey)
+        ? cleaned.trim()
+        : '$previous\n${cleaned.trim()}';
+    _transcripts[lastIndex] = '🖥️ $merged';
+    return true;
+  }
+
   bool _tryMergeMicTranscript(String cleaned, DateTime now) {
     if (_transcripts.isEmpty) return false;
     final lastIndex = _transcripts.length - 1;
@@ -1569,14 +1622,26 @@ class RecordingSessionController extends ChangeNotifier {
     return t.split(RegExp(r'\s+')).where((w) => w.trim().isNotEmpty).length;
   }
 
-  void _logAudioLevel(Uint8List bytes) {
+  DateTime? _lastLevelLogSystem;
+  DateTime? _lastLevelLogMic;
+
+  void _logAudioLevel(Uint8List bytes, {String label = 'unknown'}) {
     if (bytes.length < 2) return;
     final now = DateTime.now();
-    if (_lastLevelLogAt != null &&
-        now.difference(_lastLevelLogAt!) < const Duration(seconds: 2)) {
-      return;
+    // Rate-limit per device independently
+    if (label == 'system') {
+      if (_lastLevelLogSystem != null &&
+          now.difference(_lastLevelLogSystem!) < const Duration(seconds: 3)) {
+        return;
+      }
+      _lastLevelLogSystem = now;
+    } else {
+      if (_lastLevelLogMic != null &&
+          now.difference(_lastLevelLogMic!) < const Duration(seconds: 3)) {
+        return;
+      }
+      _lastLevelLogMic = now;
     }
-    _lastLevelLogAt = now;
 
     final samples = bytes.length ~/ 2;
     int sumSquares = 0;
@@ -1589,7 +1654,7 @@ class RecordingSessionController extends ChangeNotifier {
     }
     final rms = math.sqrt(sumSquares / samples);
     final db = 20 * math.log(rms / 32768 + 1e-6) / math.ln10;
-    _addLog('Audio RMS dBFS: ${db.toStringAsFixed(1)}');
+    _addLog('Audio [$label] RMS dBFS: ${db.toStringAsFixed(1)}');
   }
 
   Uint8List _floatTo16(List<double> source) {

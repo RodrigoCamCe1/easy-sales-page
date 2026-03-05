@@ -9,6 +9,7 @@ import 'package:flutter_audio_capture/flutter_audio_capture.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../core/app_config.dart';
+import '../services/window_capture_utils.dart' as capture;
 import '../models/session_models.dart';
 import '../services/agent_profile_store.dart';
 import '../services/recording_session_controller.dart';
@@ -52,6 +53,7 @@ class _RecordingBarState extends State<RecordingBar> {
   // ── UI-only state ──────────────────────────────────────────────────────────
   bool _showTranscript = false;
   bool _suggestionsSidebarOpen = true;
+  bool _invisibleMode = false;
 
   // ── Scroll / input controllers ─────────────────────────────────────────────
   final ScrollController _chatScrollController = ScrollController();
@@ -458,6 +460,22 @@ class _RecordingBarState extends State<RecordingBar> {
                                   onTap: _controller.toggleFreestyleMode,
                                   activeColor: const Color(0xFFE53935),
                                   isActive: _controller.freestyleMode,
+                                ),
+                                _QuickChip(
+                                  label: _invisibleMode
+                                      ? 'Visible'
+                                      : 'Invisible',
+                                  icon: _invisibleMode
+                                      ? Icons.visibility_off_rounded
+                                      : Icons.visibility_rounded,
+                                  onTap: () {
+                                    setState(() {
+                                      _invisibleMode = !_invisibleMode;
+                                    });
+                                    capture.setInvisibleMode(_invisibleMode);
+                                  },
+                                  activeColor: const Color(0xFF5CB2FF),
+                                  isActive: _invisibleMode,
                                 ),
                               ],
                             ),

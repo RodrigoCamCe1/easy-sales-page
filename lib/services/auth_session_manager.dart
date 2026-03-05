@@ -175,6 +175,40 @@ class AuthSessionManager {
     throw TimeoutException('Tiempo de espera agotado para Google Sign-In.', maxWait);
   }
 
+  Future<AuthTokenBundle> signInWithGitHub() async {
+    final state = _generateUuid();
+    final consentUrl = await _api.githubInit(state: state);
+    if (consentUrl.isEmpty) {
+      throw AuthApiException(message: 'No se recibió URL de consentimiento de GitHub.');
+    }
+
+    final uri = Uri.parse(consentUrl);
+    if (!await launchUrl(uri, mode: LaunchMode.externalApplication)) {
+      throw AuthApiException(message: 'No se pudo abrir el navegador.');
+    }
+
+    const pollInterval = Duration(seconds: 2);
+    const maxWait = Duration(minutes: 5);
+    final deadline = DateTime.now().add(maxWait);
+
+    while (DateTime.now().isBefore(deadline)) {
+      await Future<void>.delayed(pollInterval);
+      try {
+        final bundle = await _api.githubPoll(state: state);
+        if (bundle != null) {
+          await _applyBundle(bundle);
+          return bundle;
+        }
+      } on AuthApiException {
+        rethrow;
+      } catch (_) {
+        // Network blip — keep polling
+      }
+    }
+
+    throw TimeoutException('Tiempo de espera agotado para GitHub Sign-In.', maxWait);
+  }
+
   static String _generateUuid() {
     final rng = Random.secure();
     final bytes = List<int>.generate(16, (_) => rng.nextInt(256));

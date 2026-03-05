@@ -7,6 +7,8 @@ import 'package:window_manager/window_manager.dart';
 
 import '../models/agent_profile.dart';
 import '../services/agent_profile_store.dart';
+import '../services/audio_device_utils.dart';
+import '../services/audio_preferences_store.dart';
 
 class SettingsWindowApp extends StatelessWidget {
   const SettingsWindowApp({
@@ -87,6 +89,12 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
   bool _isProcessingFile = false;
   String? _fileError;
 
+  // Audio device selection
+  List<String> _audioDevices = [];
+  String? _selectedSystemDevice;
+  String? _selectedMicDevice;
+  bool _loadingDevices = false;
+
   @override
   void initState() {
     super.initState();
@@ -95,12 +103,50 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
     });
     _controller = TextEditingController(text: widget.initialPrompt);
     _loadAttachedFiles();
+    if (Platform.isWindows) _loadAudioDevices();
   }
 
   @override
   void dispose() {
     _controller.dispose();
     super.dispose();
+  }
+
+  Future<void> _loadAudioDevices() async {
+    setState(() => _loadingDevices = true);
+    final store = AudioPreferencesStore.instance;
+    _selectedSystemDevice = store.systemDevice;
+    _selectedMicDevice = store.micDevice;
+    final devices = await enumerateAudioDevices();
+    if (!mounted) return;
+    setState(() {
+      _audioDevices = devices;
+      // Ensure saved values are in the list; if not, keep them anyway
+      if (_selectedSystemDevice != null &&
+          _selectedSystemDevice!.isNotEmpty &&
+          !_audioDevices.contains(_selectedSystemDevice)) {
+        _audioDevices.insert(0, _selectedSystemDevice!);
+      }
+      if (_selectedMicDevice != null &&
+          _selectedMicDevice!.isNotEmpty &&
+          !_audioDevices.contains(_selectedMicDevice)) {
+        _audioDevices.insert(0, _selectedMicDevice!);
+      }
+      _loadingDevices = false;
+    });
+  }
+
+  Future<void> _onSystemDeviceChanged(String? value) async {
+    if (value == null) return;
+    setState(() => _selectedSystemDevice = value);
+    AudioPreferencesStore.instance.systemDevice = value;
+    await AudioPreferencesStore.instance.save();
+  }
+
+  Future<void> _onMicDeviceChanged(String? value) async {
+    setState(() => _selectedMicDevice = value);
+    AudioPreferencesStore.instance.micDevice = value ?? '';
+    await AudioPreferencesStore.instance.save();
   }
 
   Future<void> _loadAttachedFiles() async {
@@ -269,28 +315,52 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    const Text(
-                      'Aqui puedes seleccionar la fuente de audio (por ejemplo, un dispositivo loopback) '
-                      'y la carpeta de salida. La captura de audio del sistema requiere integrar un '
-                      'plugin nativo o usar un dispositivo virtual como VB-Audio/BlackHole.',
-                    ),
                     if (Platform.isWindows) ...[
-                      const SizedBox(height: 16),
-                      Row(
-                        children: [
-                          const Expanded(
-                            child: Text(
-                              'Modo de escucha fijo: Chat/sugerencias: sistema | Transcripcion: sistema + microfono',
-                            ),
+                      if (_loadingDevices)
+                        const Padding(
+                          padding: EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            children: [
+                              SizedBox(
+                                width: 16,
+                                height: 16,
+                                child: CircularProgressIndicator(strokeWidth: 2),
+                              ),
+                              SizedBox(width: 8),
+                              Text('Detectando dispositivos de audio...'),
+                            ],
                           ),
-                          const SizedBox(width: 8),
-                          TextButton(
-                            onPressed: _openMicPrivacySettings,
-                            child: const Text('Mic Windows'),
-                          ),
-                        ],
+                        )
+                      else ...[
+                        _AudioDeviceDropdown(
+                          label: 'Audio del sistema',
+                          value: _selectedSystemDevice,
+                          devices: _audioDevices,
+                          onChanged: _onSystemDeviceChanged,
+                        ),
+                        const SizedBox(height: 8),
+                        _AudioDeviceDropdown(
+                          label: 'Microfono',
+                          value: _selectedMicDevice,
+                          devices: _audioDevices,
+                          allowNone: true,
+                          onChanged: _onMicDeviceChanged,
+                        ),
+                      ],
+                      const SizedBox(height: 4),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: TextButton.icon(
+                          onPressed: _openMicPrivacySettings,
+                          icon: const Icon(Icons.settings, size: 16),
+                          label: const Text('Permisos de microfono'),
+                        ),
                       ),
-                    ],
+                    ] else
+                      const Text(
+                        'La captura de audio del sistema requiere un dispositivo virtual '
+                        'como VB-Audio/BlackHole.',
+                      ),
                     const SizedBox(height: 20),
                     Text(
                       'Prompt del sistema',
@@ -486,6 +556,61 @@ class _SettingsTitleBar extends StatelessWidget {
           ),
         ],
       ),
+    );
+  }
+}
+
+class _AudioDeviceDropdown extends StatelessWidget {
+  const _AudioDeviceDropdown({
+    required this.label,
+    required this.value,
+    required this.devices,
+    required this.onChanged,
+    this.allowNone = false,
+  });
+
+  final String label;
+  final String? value;
+  final List<String> devices;
+  final ValueChanged<String?> onChanged;
+  final bool allowNone;
+
+  @override
+  Widget build(BuildContext context) {
+    final items = <DropdownMenuItem<String>>[
+      if (allowNone)
+        const DropdownMenuItem(value: '', child: Text('Ninguno (desactivar)')),
+      for (final d in devices)
+        DropdownMenuItem(
+          value: d,
+          child: Text(d, overflow: TextOverflow.ellipsis),
+        ),
+    ];
+
+    // Ensure the current value exists in items
+    final effectiveValue =
+        items.any((i) => i.value == value) ? value : (allowNone ? '' : null);
+
+    return Row(
+      children: [
+        SizedBox(
+          width: 120,
+          child: Text(label, style: const TextStyle(fontSize: 13)),
+        ),
+        Expanded(
+          child: DropdownButtonFormField<String>(
+            initialValue: effectiveValue,
+            isExpanded: true,
+            isDense: true,
+            decoration: const InputDecoration(
+              contentPadding: EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+              border: OutlineInputBorder(),
+            ),
+            items: items,
+            onChanged: onChanged,
+          ),
+        ),
+      ],
     );
   }
 }

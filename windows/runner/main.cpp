@@ -3,7 +3,9 @@
 #include <windows.h>
 
 #include <desktop_multi_window/desktop_multi_window_plugin.h>
+#include <flutter_secure_storage_windows/flutter_secure_storage_windows_plugin.h>
 #include <screen_retriever/screen_retriever_plugin.h>
+#include <url_launcher_windows/url_launcher_windows.h>
 #include <window_manager/window_manager_plugin.h>
 
 #include "flutter_window.h"
@@ -32,8 +34,12 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
     auto* flutter_view_controller =
         reinterpret_cast<flutter::FlutterViewController*>(controller);
     auto* registry = flutter_view_controller->engine();
+    FlutterSecureStorageWindowsPluginRegisterWithRegistrar(
+        registry->GetRegistrarForPlugin("FlutterSecureStorageWindowsPlugin"));
     ScreenRetrieverPluginRegisterWithRegistrar(
         registry->GetRegistrarForPlugin("ScreenRetrieverPlugin"));
+    UrlLauncherWindowsRegisterWithRegistrar(
+        registry->GetRegistrarForPlugin("UrlLauncherWindows"));
     WindowManagerPluginRegisterWithRegistrar(
         registry->GetRegistrarForPlugin("WindowManagerPlugin"));
   });

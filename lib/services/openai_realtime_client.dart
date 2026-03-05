@@ -40,8 +40,8 @@ class OpenAIRealtimeClient {
   String _sessionInstructions = '';
   int _bufferedAudioBytes = 0;
 
-  // 16kHz * mono * 16-bit * 100ms ~= 3200 bytes.
-  static const int _minCommitBytes = 3200;
+  // 24kHz * mono * 16-bit * 100ms ~= 4800 bytes.
+  static const int _minCommitBytes = 4800;
 
   // Para evitar dobles completes en un mismo “response”
   bool _completedThisTurn = false;
@@ -112,8 +112,8 @@ class OpenAIRealtimeClient {
       'turn_detection': {
         'type': 'server_vad',
         'silence_duration_ms': vadSilenceMs,
-        // Si es solo transcripción, el VAD detecta habla pero no dispara respuesta.
-        if (transcriptionOnly) 'create_response': false,
+        // Nunca auto-crear respuestas: el controller maneja cuándo pedir respuesta.
+        'create_response': false,
       },
       // ✅ transcripción entrada: español
       'input_audio_transcription': {
@@ -143,6 +143,7 @@ class OpenAIRealtimeClient {
     if (showEvents) {
       debugPrint('OpenAI[$sourceTag] appendAudio ${audioChunk.length} bytes');
     }
+    if (_channel == null) return;
     _channel?.sink.add(jsonEncode({
       'type': 'input_audio_buffer.append',
       'audio': encoded,
@@ -215,11 +216,11 @@ class OpenAIRealtimeClient {
     // 0) ERRORES GLOBALES
     // =========================
     if (type == 'error') {
+      if (_isIgnorableError(payload)) {
+        return; // commit_empty es esperado con server_vad
+      }
       final msg = _extractErrorMessage(payload);
       debugPrint('OpenAI[$sourceTag] ERROR: $msg');
-      if (_isIgnorableError(payload)) {
-        return;
-      }
       _safeCompleteOnce(reason: 'type=error');
       return;
     }

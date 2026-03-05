@@ -191,6 +191,32 @@ class _AuthScreenState extends State<AuthScreen> {
     }
   }
 
+  Future<void> _signInWithGitHub() async {
+    setState(() {
+      _loading = true;
+      _status = 'Abriendo GitHub en el navegador...';
+    });
+    try {
+      await AuthSessionManager.instance.signInWithGitHub();
+      _setStatus('Sesion iniciada con GitHub.');
+    } on AuthApiException catch (error) {
+      _setStatus(error.toString());
+    } catch (error) {
+      final msg = error.toString();
+      if (msg.contains('Tiempo de espera')) {
+        _setStatus('Tiempo de espera agotado. Intenta de nuevo.');
+      } else {
+        _setStatus('No se pudo iniciar sesion con GitHub.');
+      }
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loading = false;
+        });
+      }
+    }
+  }
+
   void _setStatus(String message) {
     if (!mounted) return;
     setState(() {
@@ -454,12 +480,9 @@ class _AuthScreenState extends State<AuthScreen> {
                           SizedBox(
                             height: 48,
                             child: OutlinedButton.icon(
-                              onPressed: _loading
-                                  ? null
-                                  : () => _setStatus(
-                                      'Apple login se habilita en el siguiente paso.'),
-                              icon: const Icon(Icons.apple, size: 22),
-                              label: const Text('Continuar con Apple'),
+                              onPressed: _loading ? null : _signInWithGitHub,
+                              icon: const Icon(Icons.code, size: 22),
+                              label: const Text('Continuar con GitHub'),
                             ),
                           ),
                           const SizedBox(height: 12),

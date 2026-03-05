@@ -6,6 +6,7 @@ import 'package:window_manager/window_manager.dart';
 
 import 'app.dart';
 import 'core/app_config.dart';
+import 'services/audio_preferences_store.dart';
 import 'services/auth_session_manager.dart';
 import 'ui/recording_bar.dart';
 import 'ui/settings_window.dart';
@@ -45,6 +46,7 @@ Map<String, dynamic> _parseWindowArgs(List<String> args) {
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: '.env');
+  await AudioPreferencesStore.instance.load();
 
   // ============================
   // SUBWINDOW (desktop_multi_window)

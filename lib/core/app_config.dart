@@ -3,6 +3,8 @@ import 'dart:io';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:path/path.dart' as p;
 
+import '../services/audio_preferences_store.dart';
+
 const double barHeight = 280.0;
 const String dartDefineOpenAIKey = String.fromEnvironment('OPENAI_API_KEY');
 const String defaultOpenAIRealtimeModel = 'gpt-4o-realtime-preview';
@@ -28,9 +30,8 @@ String get openAIRealtimeModel =>
 String get systemPrompt =>
     dotenv.env['SYSTEM_PROMPT'] ?? 'Eres un agente de IA que responde de forma clara y breve.';
 
-String get windowsAudioDevice =>
-    dotenv.env['WINDOWS_AUDIO_DEVICE'] ?? 'Stereo Mix (Realtek(R) Audio)';
-String get windowsMicDevice => dotenv.env['WINDOWS_MIC_DEVICE'] ?? '';
+String get windowsAudioDevice => AudioPreferencesStore.instance.systemDevice;
+String get windowsMicDevice => AudioPreferencesStore.instance.micDevice;
 String get windowsAudioBackend => dotenv.env['WINDOWS_AUDIO_BACKEND'] ?? 'dshow';
 String get windowsAudioSampleRate =>
     dotenv.env['WINDOWS_AUDIO_SAMPLE_RATE'] ?? '';

@@ -926,11 +926,13 @@ class _IconPill extends StatelessWidget {
     required this.icon,
     required this.tooltip,
     required this.onTap,
+    this.isActive = false,
   });
 
   final IconData icon;
   final String tooltip;
   final VoidCallback onTap;
+  final bool isActive;
 
   @override
   Widget build(BuildContext context) {
@@ -943,13 +945,16 @@ class _IconPill extends StatelessWidget {
           width: 34,
           height: 34,
           decoration: BoxDecoration(
-            color: const Color(0xFF1B1F2A),
+            color: isActive ? const Color(0xFF1A2940) : const Color(0xFF1B1F2A),
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: Colors.white.withOpacity(0.08),
+              color: isActive
+                  ? const Color(0xFF5CB2FF).withOpacity(0.4)
+                  : Colors.white.withOpacity(0.08),
             ),
           ),
-          child: Icon(icon, size: 18),
+          child: Icon(icon, size: 18,
+              color: isActive ? const Color(0xFF5CB2FF) : null),
         ),
       ),
     );
