@@ -9,7 +9,7 @@ window.addEventListener('scroll', () => {
 }, { passive: true });
 
 // Scroll animations
-const animatedElements = document.querySelectorAll('.animate-on-scroll');
+const animatedElements = document.querySelectorAll('.animate-on-scroll, .stagger-in');
 const observer = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
@@ -17,7 +17,7 @@ const observer = new IntersectionObserver((entries) => {
       observer.unobserve(entry.target);
     }
   });
-}, { threshold: 0.12, rootMargin: '0px 0px -40px 0px' });
+}, { threshold: 0.1, rootMargin: '0px 0px -60px 0px' });
 
 animatedElements.forEach(el => observer.observe(el));
 
