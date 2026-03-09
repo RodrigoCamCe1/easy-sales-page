@@ -9,7 +9,7 @@ window.addEventListener('scroll', () => {
 }, { passive: true });
 
 // Scroll animations
-const animatedElements = document.querySelectorAll('.animate-on-scroll, .stagger-in');
+const animatedElements = document.querySelectorAll('.animate-on-scroll, .stagger-in, .footer-reveal');
 const observer = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
