@@ -90,9 +90,9 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
   String? _fileError;
 
   // Audio device selection
-  List<String> _audioDevices = [];
-  String? _selectedSystemDevice;
-  String? _selectedMicDevice;
+  List<AudioDeviceInfo> _audioDevices = [];
+  String? _selectedSystemDeviceId;
+  String? _selectedMicDeviceId;
   bool _loadingDevices = false;
 
   @override
@@ -115,38 +115,60 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
   Future<void> _loadAudioDevices() async {
     setState(() => _loadingDevices = true);
     final store = AudioPreferencesStore.instance;
-    _selectedSystemDevice = store.systemDevice;
-    _selectedMicDevice = store.micDevice;
+    _selectedSystemDeviceId = store.systemDeviceId;
+    _selectedMicDeviceId = store.micDeviceId;
     final devices = await enumerateAudioDevices();
     if (!mounted) return;
     setState(() {
       _audioDevices = devices;
-      // Ensure saved values are in the list; if not, keep them anyway
-      if (_selectedSystemDevice != null &&
-          _selectedSystemDevice!.isNotEmpty &&
-          !_audioDevices.contains(_selectedSystemDevice)) {
-        _audioDevices.insert(0, _selectedSystemDevice!);
+      // Ensure saved values are in the list; if not, keep them as fallback
+      if (_selectedSystemDeviceId != null &&
+          _selectedSystemDeviceId!.isNotEmpty &&
+          !_audioDevices.any((d) => d.deviceId == _selectedSystemDeviceId)) {
+        _audioDevices.insert(
+          0,
+          AudioDeviceInfo(
+            name: store.systemDevice,
+            altName: store.systemDeviceId,
+          ),
+        );
       }
-      if (_selectedMicDevice != null &&
-          _selectedMicDevice!.isNotEmpty &&
-          !_audioDevices.contains(_selectedMicDevice)) {
-        _audioDevices.insert(0, _selectedMicDevice!);
+      if (_selectedMicDeviceId != null &&
+          _selectedMicDeviceId!.isNotEmpty &&
+          !_audioDevices.any((d) => d.deviceId == _selectedMicDeviceId)) {
+        _audioDevices.insert(
+          0,
+          AudioDeviceInfo(
+            name: store.micDevice,
+            altName: store.micDeviceId,
+          ),
+        );
       }
       _loadingDevices = false;
     });
   }
 
-  Future<void> _onSystemDeviceChanged(String? value) async {
-    if (value == null) return;
-    setState(() => _selectedSystemDevice = value);
-    AudioPreferencesStore.instance.systemDevice = value;
-    await AudioPreferencesStore.instance.save();
+  Future<void> _onSystemDeviceChanged(AudioDeviceInfo? device) async {
+    if (device == null) return;
+    setState(() => _selectedSystemDeviceId = device.deviceId);
+    final store = AudioPreferencesStore.instance;
+    store.systemDevice = device.name;
+    store.systemDeviceId = device.deviceId;
+    await store.save();
   }
 
-  Future<void> _onMicDeviceChanged(String? value) async {
-    setState(() => _selectedMicDevice = value);
-    AudioPreferencesStore.instance.micDevice = value ?? '';
-    await AudioPreferencesStore.instance.save();
+  Future<void> _onMicDeviceChanged(AudioDeviceInfo? device) async {
+    final store = AudioPreferencesStore.instance;
+    if (device == null) {
+      setState(() => _selectedMicDeviceId = '');
+      store.micDevice = '';
+      store.micDeviceId = '';
+    } else {
+      setState(() => _selectedMicDeviceId = device.deviceId);
+      store.micDevice = device.name;
+      store.micDeviceId = device.deviceId;
+    }
+    await store.save();
   }
 
   Future<void> _loadAttachedFiles() async {
@@ -334,14 +356,14 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
                       else ...[
                         _AudioDeviceDropdown(
                           label: 'Audio del sistema',
-                          value: _selectedSystemDevice,
+                          selectedDeviceId: _selectedSystemDeviceId,
                           devices: _audioDevices,
                           onChanged: _onSystemDeviceChanged,
                         ),
                         const SizedBox(height: 8),
                         _AudioDeviceDropdown(
                           label: 'Microfono',
-                          value: _selectedMicDevice,
+                          selectedDeviceId: _selectedMicDeviceId,
                           devices: _audioDevices,
                           allowNone: true,
                           onChanged: _onMicDeviceChanged,
@@ -474,8 +496,8 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
                         onPressed: widget.canEditPrompt ? _savePrompt : null,
                         child: Text(
                           widget.canEditPrompt
-                              ? 'Guardar prompt'
-                              : 'Prompt bloqueado',
+                              ? 'Guardar configuración'
+                              : 'Configuración bloqueada',
                         ),
                       ),
                     ),
@@ -563,33 +585,36 @@ class _SettingsTitleBar extends StatelessWidget {
 class _AudioDeviceDropdown extends StatelessWidget {
   const _AudioDeviceDropdown({
     required this.label,
-    required this.value,
+    required this.selectedDeviceId,
     required this.devices,
     required this.onChanged,
     this.allowNone = false,
   });
 
   final String label;
-  final String? value;
-  final List<String> devices;
-  final ValueChanged<String?> onChanged;
+  final String? selectedDeviceId;
+  final List<AudioDeviceInfo> devices;
+  final ValueChanged<AudioDeviceInfo?> onChanged;
   final bool allowNone;
 
   @override
   Widget build(BuildContext context) {
+    // Use deviceId as the dropdown value for stable matching
     final items = <DropdownMenuItem<String>>[
       if (allowNone)
         const DropdownMenuItem(value: '', child: Text('Ninguno (desactivar)')),
       for (final d in devices)
         DropdownMenuItem(
-          value: d,
-          child: Text(d, overflow: TextOverflow.ellipsis),
+          value: d.deviceId,
+          child: Text(d.name, overflow: TextOverflow.ellipsis),
         ),
     ];
 
     // Ensure the current value exists in items
+    final hasSelection =
+        items.any((i) => i.value == selectedDeviceId);
     final effectiveValue =
-        items.any((i) => i.value == value) ? value : (allowNone ? '' : null);
+        hasSelection ? selectedDeviceId : (allowNone ? '' : null);
 
     return Row(
       children: [
@@ -607,7 +632,17 @@ class _AudioDeviceDropdown extends StatelessWidget {
               border: OutlineInputBorder(),
             ),
             items: items,
-            onChanged: onChanged,
+            onChanged: (id) {
+              if (id == null || id.isEmpty) {
+                onChanged(null);
+                return;
+              }
+              final device = devices.firstWhere(
+                (d) => d.deviceId == id,
+                orElse: () => AudioDeviceInfo(name: id, altName: ''),
+              );
+              onChanged(device);
+            },
           ),
         ),
       ],

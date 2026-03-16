@@ -24,7 +24,6 @@ class ConversationStore {
 
     if (await legacy.exists() && !await scoped.exists()) {
       await legacy.copy(scoped.path);
-      // Rename legacy so it doesn't get copied to other users.
       await legacy.rename(p.join(dir.path, 'conversations.json.migrated'));
     }
 
@@ -58,38 +57,15 @@ class ConversationStore {
     return legacyItems;
   }
 
-  Future<List<Conversation>> load() async {
-    final rawItems = await withAuthRetry<List<Map<String, dynamic>>>(
-      action: (token) => _remoteApi.getConversations(accessToken: token),
-      silent: true,
-    );
-
-    if (rawItems != null) {
-      if (rawItems.isNotEmpty) {
-        return rawItems.map(Conversation.fromJson).toList();
-      }
-
-      // Seed inicial: si backend aún no tiene nada, sube lo local del usuario.
-      final local = await _loadLocal();
-      if (local.isNotEmpty) {
-        await withAuthRetry<void>(
-          action: (token) => _remoteApi.putConversations(
-            accessToken: token,
-            conversations: local.map((item) => item.toJson()).toList(),
-          ),
-          silent: true,
-        );
-        return local;
-      }
-      return [];
-    }
-
-    return _loadLocal();
+  Future<void> _saveLocal(List<Conversation> conversations) async {
+    final file = await _file();
+    final payload = conversations.map((item) => item.toJson()).toList();
+    await file.writeAsString(jsonEncode(payload));
   }
 
-  Future<void> saveAll(List<Conversation> conversations) async {
+  Future<void> _syncToRemote(List<Conversation> conversations) async {
     final payload = conversations.map((item) => item.toJson()).toList();
-    final saved = await withAuthRetry<bool>(
+    await withAuthRetry<bool>(
       action: (token) async {
         await _remoteApi.putConversations(
           accessToken: token,
@@ -99,14 +75,63 @@ class ConversationStore {
       },
       silent: true,
     );
-    if (saved == true) return;
+  }
 
-    final file = await _file();
-    await file.writeAsString(jsonEncode(payload));
+  Future<List<Conversation>> load() async {
+    final rawItems = await withAuthRetry<List<Map<String, dynamic>>>(
+      action: (token) => _remoteApi.getConversations(accessToken: token),
+      silent: true,
+    );
+
+    if (rawItems != null) {
+      if (rawItems.isNotEmpty) {
+        final remote = rawItems.map(Conversation.fromJson).toList();
+        // Merge: check if local has conversations not in remote
+        final local = await _loadLocal();
+        if (local.isNotEmpty) {
+          final remoteIds = remote.map((c) => c.id).toSet();
+          final missing = local.where((c) => !remoteIds.contains(c.id)).toList();
+          if (missing.isNotEmpty) {
+            remote.addAll(missing);
+            remote.sort((a, b) => b.startedAt.compareTo(a.startedAt));
+            // Save merged list to both local and remote
+            await _saveLocal(remote);
+            _syncToRemote(remote); // fire-and-forget
+            return remote;
+          }
+        }
+        // Save remote data locally for offline access
+        await _saveLocal(remote);
+        return remote;
+      }
+
+      // Seed inicial: si backend aún no tiene nada, sube lo local del usuario.
+      final local = await _loadLocal();
+      if (local.isNotEmpty) {
+        _syncToRemote(local); // fire-and-forget
+        return local;
+      }
+      return [];
+    }
+
+    return _loadLocal();
+  }
+
+  Future<void> saveAll(List<Conversation> conversations) async {
+    // Always save locally first
+    await _saveLocal(conversations);
+    // Then sync to remote in background
+    _syncToRemote(conversations);
   }
 
   Future<void> add(Conversation conversation) async {
-    final added = await withAuthRetry<bool>(
+    // 1. Save locally first — guaranteed to persist
+    final current = await _loadLocal();
+    current.insert(0, conversation);
+    await _saveLocal(current);
+
+    // 2. Try remote in background — don't block or lose data if it fails
+    withAuthRetry<bool>(
       action: (token) async {
         await _remoteApi.addConversation(
           accessToken: token,
@@ -116,10 +141,5 @@ class ConversationStore {
       },
       silent: true,
     );
-    if (added == true) return;
-
-    final current = await load();
-    current.insert(0, conversation);
-    await saveAll(current);
   }
 }

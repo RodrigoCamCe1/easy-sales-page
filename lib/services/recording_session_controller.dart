@@ -90,6 +90,7 @@ class RecordingSessionController extends ChangeNotifier {
   DateTime? _sessionEndedAt;
 
   String _ragContext = '';
+  String _lastResolvedToken = '';
 
   OpenAIRealtimeClient? _openAIClientMic;
   OpenAIRealtimeClient? _openAIClientSystem;
@@ -747,7 +748,7 @@ class RecordingSessionController extends ChangeNotifier {
       _openAIClientMic = null;
       _openAIClientSystem?.close();
       _openAIClientSystem = null;
-      _maybeSaveConversation();
+      unawaited(_maybeSaveConversation());
     }
   }
 
@@ -983,8 +984,8 @@ class RecordingSessionController extends ChangeNotifier {
     }
 
     _statusMessage = includeMic
-        ? 'AsesorIA iniciada: conectada a OpenAI (sistema + microfono). Ya puedes hablar.'
-        : 'AsesorIA iniciada: conectada a OpenAI. Ya puedes hablar.';
+        ? 'EasyExpert iniciada: conectada a OpenAI (sistema + microfono). Ya puedes hablar.'
+        : 'EasyExpert iniciada: conectada a OpenAI. Ya puedes hablar.';
     _safeNotify();
   }
 
@@ -1095,7 +1096,15 @@ class RecordingSessionController extends ChangeNotifier {
       final ephemeral =
           await RealtimeSessionApi().createSession(accessToken: accessToken);
       debugPrint('[TOKEN] ephemeralToken obtenido: ${ephemeral != null}');
-      if (ephemeral != null && ephemeral.isNotEmpty) return ephemeral;
+      if (ephemeral != null && ephemeral.isNotEmpty) {
+        _lastResolvedToken = ephemeral;
+        return ephemeral;
+      }
+    }
+    // Fallback: reuse last successful token (backend may be sleeping)
+    if (_lastResolvedToken.isNotEmpty) {
+      debugPrint('[TOKEN] reutilizando ultimo token obtenido');
+      return _lastResolvedToken;
     }
     debugPrint('[TOKEN] fallback openAIKey presente: ${openAIKey.isNotEmpty}');
     return openAIKey;

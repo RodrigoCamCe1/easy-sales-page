@@ -275,23 +275,10 @@ class _AuthScreenState extends State<AuthScreen> {
                     constraints: const BoxConstraints(maxWidth: 560),
                     child: Column(
                       children: [
-                        Container(
-                          width: 54,
-                          height: 54,
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF0F2A5A),
-                            borderRadius: BorderRadius.circular(14),
-                            border: Border.all(
-                              color:
-                                  const Color(0xFF5CB2FF).withValues(alpha: 0.35),
-                            ),
-                          ),
-                          alignment: Alignment.center,
-                          child: const Icon(
-                            Icons.north_east_rounded,
-                            color: Colors.white,
-                            size: 30,
-                          ),
+                        Image.asset(
+                          'assets/logo_name.png',
+                          width: 280,
+                          fit: BoxFit.contain,
                         ),
                         const SizedBox(height: 18),
                         Text(

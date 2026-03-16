@@ -16,7 +16,11 @@ class AudioPreferencesStore {
   String? _systemDevice;
   String? _micDevice;
 
-  /// Effective system device: saved preference → .env fallback.
+  /// Stable device IDs (dshow alternative names) — encoding-safe ASCII paths.
+  String? _systemDeviceId;
+  String? _micDeviceId;
+
+  /// Effective system device display name: saved preference → .env fallback.
   String get systemDevice =>
       _systemDevice ??
       dotenv.env['WINDOWS_AUDIO_DEVICE'] ??
@@ -24,11 +28,27 @@ class AudioPreferencesStore {
 
   set systemDevice(String value) => _systemDevice = value;
 
-  /// Effective mic device: saved preference → .env fallback.
+  /// Effective mic device display name: saved preference → .env fallback.
   String get micDevice =>
       _micDevice ?? dotenv.env['WINDOWS_MIC_DEVICE'] ?? '';
 
   set micDevice(String value) => _micDevice = value;
+
+  /// Stable system device ID (alternative name). Falls back to display name.
+  String get systemDeviceId =>
+      (_systemDeviceId != null && _systemDeviceId!.isNotEmpty)
+          ? _systemDeviceId!
+          : systemDevice;
+
+  set systemDeviceId(String value) => _systemDeviceId = value;
+
+  /// Stable mic device ID (alternative name). Falls back to display name.
+  String get micDeviceId =>
+      (_micDeviceId != null && _micDeviceId!.isNotEmpty)
+          ? _micDeviceId!
+          : micDevice;
+
+  set micDeviceId(String value) => _micDeviceId = value;
 
   // ──────────────────────────────────────────────────────────────
 
@@ -46,6 +66,8 @@ class AudioPreferencesStore {
       if (map is! Map) return;
       _systemDevice = map['systemDevice'] as String?;
       _micDevice = map['micDevice'] as String?;
+      _systemDeviceId = map['systemDeviceId'] as String?;
+      _micDeviceId = map['micDeviceId'] as String?;
     } catch (e) {
       debugPrint('[AudioPreferencesStore] load error: $e');
     }
@@ -57,6 +79,8 @@ class AudioPreferencesStore {
       final map = <String, String?>{
         'systemDevice': _systemDevice,
         'micDevice': _micDevice,
+        'systemDeviceId': _systemDeviceId,
+        'micDeviceId': _micDeviceId,
       };
       await f.writeAsString(jsonEncode(map));
     } catch (e) {

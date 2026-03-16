@@ -27,7 +27,7 @@ class RecordingBarApp extends StatelessWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'AsesorIA Audio Bar',
+      title: 'EasyExpert Audio Bar',
       theme: ThemeData(
         colorScheme: colorScheme,
         useMaterial3: true,
@@ -370,7 +370,7 @@ class _RecordingBarState extends State<RecordingBar> {
                                   padding:
                                       const EdgeInsets.symmetric(horizontal: 8),
                                   child: Text(
-                                    'AsesorIA',
+                                    'EasyExpert',
                                     style: textTheme.labelSmall?.copyWith(
                                       color: colorScheme.onSurfaceVariant,
                                       fontWeight: FontWeight.w600,
@@ -502,7 +502,7 @@ class _RecordingBarState extends State<RecordingBar> {
                                   decoration: InputDecoration(
                                     border: InputBorder.none,
                                     hintText:
-                                        'Ask about your screen or conversation, or',
+                                        'Pregunta sobre lo que quieras, sobre la conversación o alguna duda.',
                                     hintStyle: textTheme.bodySmall?.copyWith(
                                       color: colorScheme.onSurface
                                           .withOpacity(0.78),

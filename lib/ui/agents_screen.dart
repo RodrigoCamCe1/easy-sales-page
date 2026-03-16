@@ -558,18 +558,20 @@ class _AgentCard extends StatelessWidget {
             overflow: TextOverflow.ellipsis,
             style: TextStyle(color: Colors.white.withValues(alpha: 0.66)),
           ),
-          const SizedBox(height: 8),
-          Row(
-            children: [
-              Expanded(
-                child: OutlinedButton.icon(
-                  onPressed: onQuickEdit,
-                  icon: const Icon(Icons.edit_rounded, size: 16),
-                  label: const Text('Editar'),
+          if (profile.canEditPrompt) ...[
+            const SizedBox(height: 8),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    onPressed: onQuickEdit,
+                    icon: const Icon(Icons.edit_rounded, size: 16),
+                    label: const Text('Editar'),
+                  ),
                 ),
-              ),
-            ],
-          ),
+              ],
+            ),
+          ],
         ],
       ),
     );

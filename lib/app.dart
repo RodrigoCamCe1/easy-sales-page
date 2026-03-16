@@ -17,7 +17,7 @@ class AsesoriaApp extends StatelessWidget {
 
     return MaterialApp(
       debugShowCheckedModeBanner: false,
-      title: 'AsesorIA',
+      title: 'EasyExpert',
       locale: const Locale('es', 'ES'),
       supportedLocales: const [
         Locale('es', 'ES'),

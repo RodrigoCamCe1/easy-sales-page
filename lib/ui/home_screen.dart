@@ -321,16 +321,31 @@ class _HomeScreenState extends State<HomeScreen> {
       builder: (ctx) {
         return StatefulBuilder(builder: (ctx, setDialogState) {
           return AlertDialog(
-            title: const Text('Agendar reunion'),
+            title: const Row(
+              children: [
+                Icon(Icons.event_rounded, size: 22),
+                SizedBox(width: 8),
+                Text('Agendar reunión'),
+              ],
+            ),
             content: Column(
               mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
                 TextField(
                   controller: titleCtrl,
-                  decoration:
-                      const InputDecoration(labelText: 'Titulo', isDense: true),
+                  decoration: const InputDecoration(
+                    labelText: 'Nombre de la reunión',
+                    hintText: 'Ej: Llamada con cliente',
+                    prefixIcon: Icon(Icons.title_rounded, size: 18),
+                    isDense: true,
+                  ),
                 ),
-                const SizedBox(height: 12),
+                const SizedBox(height: 16),
+                const Text('Fecha',
+                    style:
+                        TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                const SizedBox(height: 4),
                 Row(
                   children: [
                     Expanded(
@@ -354,37 +369,65 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                   ],
                 ),
-                const SizedBox(height: 8),
+                const SizedBox(height: 16),
+                const Text('Horario',
+                    style:
+                        TextStyle(fontSize: 12, fontWeight: FontWeight.w500)),
+                const SizedBox(height: 4),
                 Row(
                   children: [
                     Expanded(
-                      child: OutlinedButton(
-                        onPressed: () async {
-                          final picked = await showTimePicker(
-                              context: ctx, initialTime: startTime);
-                          if (picked != null) {
-                            setDialogState(() => startTime = picked);
-                          }
-                        },
-                        child: Text(
-                            '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}'),
+                      child: Column(
+                        children: [
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.schedule_rounded, size: 16),
+                            onPressed: () async {
+                              final picked = await showTimePicker(
+                                  context: ctx, initialTime: startTime);
+                              if (picked != null) {
+                                setDialogState(() => startTime = picked);
+                              }
+                            },
+                            label: Text(
+                                '${startTime.hour.toString().padLeft(2, '0')}:${startTime.minute.toString().padLeft(2, '0')}'),
+                          ),
+                          const SizedBox(height: 2),
+                          Text('Desde',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(ctx)
+                                      .colorScheme
+                                      .onSurfaceVariant)),
+                        ],
                       ),
                     ),
                     const Padding(
-                      padding: EdgeInsets.symmetric(horizontal: 8),
-                      child: Text('—'),
+                      padding: EdgeInsets.only(bottom: 16),
+                      child: Icon(Icons.arrow_forward_rounded, size: 16),
                     ),
                     Expanded(
-                      child: OutlinedButton(
-                        onPressed: () async {
-                          final picked = await showTimePicker(
-                              context: ctx, initialTime: endTime);
-                          if (picked != null) {
-                            setDialogState(() => endTime = picked);
-                          }
-                        },
-                        child: Text(
-                            '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}'),
+                      child: Column(
+                        children: [
+                          OutlinedButton.icon(
+                            icon: const Icon(Icons.schedule_rounded, size: 16),
+                            onPressed: () async {
+                              final picked = await showTimePicker(
+                                  context: ctx, initialTime: endTime);
+                              if (picked != null) {
+                                setDialogState(() => endTime = picked);
+                              }
+                            },
+                            label: Text(
+                                '${endTime.hour.toString().padLeft(2, '0')}:${endTime.minute.toString().padLeft(2, '0')}'),
+                          ),
+                          const SizedBox(height: 2),
+                          Text('Hasta',
+                              style: TextStyle(
+                                  fontSize: 11,
+                                  color: Theme.of(ctx)
+                                      .colorScheme
+                                      .onSurfaceVariant)),
+                        ],
                       ),
                     ),
                   ],
@@ -473,10 +516,173 @@ class _HomeScreenState extends State<HomeScreen> {
       ..setFrame(
         Rect.fromLTWH(left, top, targetWidth, targetHeight),
       )
-      ..setTitle('AsesorIA')
+      ..setTitle('EasyExpert')
       ..show();
     _barWindow = window;
     await windowManager.hide();
+  }
+
+  void _showHelpDialog() {
+    showDialog(
+      context: context,
+      builder: (context) {
+        final textTheme = Theme.of(context).textTheme;
+        return Dialog(
+          backgroundColor: const Color(0xFF1A1D24),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+          child: ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 480, maxHeight: 520),
+            child: Padding(
+              padding: const EdgeInsets.all(24),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Icon(Icons.help_outline_rounded,
+                          color: const Color(0xFF5CB2FF), size: 24),
+                      const SizedBox(width: 10),
+                      Text(
+                        'Como usar EasyExpert',
+                        style: textTheme.titleLarge?.copyWith(
+                          color: Colors.white,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                      const Spacer(),
+                      IconButton(
+                        onPressed: () => Navigator.pop(context),
+                        icon: const Icon(Icons.close_rounded,
+                            color: Colors.white54),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 16),
+                  Divider(color: Colors.white.withOpacity(0.1)),
+                  const SizedBox(height: 12),
+                  Flexible(
+                    child: SingleChildScrollView(
+                      child: Column(
+                        children: [
+                          _helpItem(
+                            Icons.play_arrow_rounded,
+                            'Start EasyExpert',
+                            'Abre la barra flotante que escucha el audio de tu sistema y microfono en tiempo real.',
+                            const Color(0xFF5CB2FF),
+                          ),
+                          _helpItem(
+                            Icons.tune_rounded,
+                            'Agentes',
+                            'Selecciona o crea agentes con instrucciones personalizadas y documentos adjuntos para guiar las respuestas del asistente.',
+                            const Color(0xFFFFD45C),
+                          ),
+                          _helpItem(
+                            Icons.lightbulb_outline_rounded,
+                            'Sugerencias',
+                            'El panel lateral muestra preguntas sugeridas basadas en la conversacion que estas escuchando.',
+                            const Color(0xFF81C784),
+                          ),
+                          _helpItem(
+                            Icons.mic_rounded,
+                            'Transcripcion',
+                            'Muestra en tiempo real lo que se esta diciendo, separando audio del sistema y del microfono.',
+                            const Color(0xFFCE93D8),
+                          ),
+                          _helpItem(
+                            Icons.auto_fix_high_rounded,
+                            'Modo libre',
+                            'Permite al asistente responder libremente sin limitarse al documento adjunto. Util para preguntas generales.',
+                            const Color(0xFFE53935),
+                          ),
+                          _helpItem(
+                            Icons.visibility_rounded,
+                            'Modo invisible',
+                            'Oculta la barra de las capturas de pantalla y grabaciones, para que no sea visible en videollamadas.',
+                            const Color(0xFF5CB2FF),
+                          ),
+                          _helpItem(
+                            Icons.chat_rounded,
+                            'Chat manual',
+                            'Escribe preguntas directamente al asistente usando el campo de texto en la barra.',
+                            const Color(0xFFFFB74D),
+                          ),
+                          _helpItem(
+                            Icons.settings_rounded,
+                            'Configuracion',
+                            'Ajusta el dispositivo de audio del sistema y microfono, y edita el prompt del agente activo.',
+                            Colors.white70,
+                          ),
+                          _helpItem(
+                            Icons.star_rounded,
+                            'Favoritos y filtros',
+                            'Marca conversaciones como favoritas y filtra por fecha o texto desde la barra de busqueda.',
+                            const Color(0xFFFFD45C),
+                          ),
+                          _helpItem(
+                            Icons.calendar_month_rounded,
+                            'Google Calendar',
+                            'Conecta tu calendario para ver tus proximas reuniones y prepararte con anticipacion.',
+                            const Color(0xFF7FC3FF),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  static Widget _helpItem(
+      IconData icon, String title, String description, Color color) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 14),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Container(
+            width: 34,
+            height: 34,
+            decoration: BoxDecoration(
+              color: color.withOpacity(0.15),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 18, color: color),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.w600,
+                    fontSize: 14,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  description,
+                  style: TextStyle(
+                    color: Colors.white.withOpacity(0.65),
+                    fontSize: 12.5,
+                    height: 1.4,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   Future<void> _openSettings() async {
@@ -565,7 +771,7 @@ class _HomeScreenState extends State<HomeScreen> {
           child: Column(
             children: [
               _FramelessTitleBar(
-                title: 'AsesorIA',
+                title: 'EasyExpert',
                 onClose: () async {
                   await windowManager.close();
                 },
@@ -577,9 +783,9 @@ class _HomeScreenState extends State<HomeScreen> {
                     Row(
                       children: [
                         _IconPill(
-                          icon: Icons.public,
-                          tooltip: 'Inicio',
-                          onTap: () {},
+                          icon: Icons.help_outline_rounded,
+                          tooltip: 'Tutorial',
+                          onTap: _showHelpDialog,
                         ),
                         const SizedBox(width: 8),
                         _IconPill(
@@ -739,12 +945,10 @@ class _HomeScreenState extends State<HomeScreen> {
                     children: [
                       Row(
                         children: [
-                          Text(
-                            'AsesorIA',
-                            style: textTheme.headlineMedium?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
+                          Image.asset(
+                            'assets/logo_name.png',
+                            width: 180,
+                            fit: BoxFit.contain,
                           ),
                           const SizedBox(width: 12),
                           _SoftPill(
@@ -757,7 +961,7 @@ class _HomeScreenState extends State<HomeScreen> {
                             onPressed: _openRecordingBar,
                             icon:
                                 const Icon(Icons.play_arrow_rounded, size: 18),
-                            label: const Text('Start AsesorIA'),
+                            label: const Text('Start EasyExpert'),
                             style: ElevatedButton.styleFrom(
                               backgroundColor: const Color(0xFF5CB2FF),
                               foregroundColor: const Color(0xFF0B0C10),
@@ -777,9 +981,9 @@ class _HomeScreenState extends State<HomeScreen> {
                           Expanded(
                             flex: 3,
                             child: _GradientCard(
-                              title: 'Inicia reuniones con AsesorIA',
+                              title: 'Inicia reuniones con EasyExpert',
                               subtitle:
-                                  'AsesorIA analiza participantes, ofrece asistencia en tiempo real y genera notas.',
+                                  'EasyExpert analiza participantes, ofrece asistencia en tiempo real y genera notas.',
                               actionText: 'Unirse a demo',
                               onAction: _openRecordingBar,
                             ),
@@ -1347,7 +1551,7 @@ class _EmptyState extends StatelessWidget {
           const SizedBox(height: 12),
           ElevatedButton(
             onPressed: onStart,
-            child: const Text('Iniciar AsesorIA'),
+            child: const Text('Iniciar EasyExpert'),
           ),
         ],
       ),
