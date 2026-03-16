@@ -103,6 +103,34 @@ List<AudioDeviceInfo> _parseDevices(String stderr) {
   return devices;
 }
 
+/// Common names for loopback/stereo-mix devices across Windows locales.
+const _loopbackKeywords = [
+  'stereo mix',
+  'mezcla est',      // "Mezcla estéreo" (Spanish)
+  'wave out mix',
+  'what u hear',
+  'what you hear',
+  'lo que oyes',
+  'mixage',           // French
+  'stereomix',
+  'aufnahmemix',      // German
+];
+
+/// Returns true if [name] looks like a loopback/stereo-mix device.
+bool _isLoopbackDevice(String name) {
+  final lower = name.toLowerCase();
+  return _loopbackKeywords.any((kw) => lower.contains(kw));
+}
+
+/// Auto-detect a loopback device from the enumerated list.
+/// Returns null if none found.
+AudioDeviceInfo? findLoopbackDevice(List<AudioDeviceInfo> devices) {
+  for (final d in devices) {
+    if (_isLoopbackDevice(d.name)) return d;
+  }
+  return null;
+}
+
 String _resolveFfmpeg() {
   final exeDir = p.dirname(Platform.resolvedExecutable);
   final bundled = p.join(exeDir, 'ffmpeg.exe');

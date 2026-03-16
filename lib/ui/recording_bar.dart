@@ -122,6 +122,7 @@ class _RecordingBarState extends State<RecordingBar> {
     _controller.onRequestStopPlatformCapture = () async {
       await _audioCapture.stop();
     };
+    _controller.onNoLoopbackDeviceFound = _showStereoMixGuide;
 
     WidgetsBinding.instance.addPostFrameCallback((_) {
       _configureFramelessWindow();
@@ -242,6 +243,14 @@ class _RecordingBarState extends State<RecordingBar> {
       ..show();
   }
 
+  void _showStereoMixGuide() {
+    if (!mounted) return;
+    showDialog(
+      context: context,
+      builder: (_) => const _StereoMixGuideDialog(),
+    );
+  }
+
   @override
   void dispose() {
     _controller.onScrollChatToBottom = null;
@@ -250,6 +259,7 @@ class _RecordingBarState extends State<RecordingBar> {
     _controller.onRequestStartPlatformCapture = null;
     _controller.onRequestStopPlatformCapture = null;
     _controller.onPlatformCaptureError = null;
+    _controller.onNoLoopbackDeviceFound = null;
     _controller.dispose();
     _chatScrollController.dispose();
     _suggestionScrollController.dispose();
@@ -998,4 +1008,197 @@ String _fixMojibake(String input) {
     if (fixed.isNotEmpty) return fixed;
   } catch (_) {}
   return input;
+}
+
+// ── Stereo Mix setup guide dialog ───────────────────────────────────────────
+
+class _StereoMixGuideDialog extends StatelessWidget {
+  const _StereoMixGuideDialog();
+
+  @override
+  Widget build(BuildContext context) {
+    return Dialog(
+      backgroundColor: const Color(0xFF111827),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+      child: ConstrainedBox(
+        constraints: const BoxConstraints(maxWidth: 460),
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(28, 24, 28, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Icon(
+                Icons.surround_sound_rounded,
+                size: 48,
+                color: Color(0xFF5CB2FF),
+              ),
+              const SizedBox(height: 12),
+              const Text(
+                'Habilitar audio del sistema',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.w700,
+                  color: Colors.white,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'EasyExpert necesita "Stereo Mix" para escuchar el audio de tu PC. '
+                'Sigue estos pasos para activarlo:',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 13,
+                  color: Colors.white.withValues(alpha: 0.65),
+                ),
+              ),
+              const SizedBox(height: 20),
+              const _GuideStep(
+                number: 1,
+                icon: Icons.volume_up_rounded,
+                title: 'Abrir configuracion de sonido',
+                description:
+                    'Click derecho en el icono de parlante en la barra de tareas → '
+                    '"Configuracion de sonido"',
+              ),
+              const SizedBox(height: 12),
+              const _GuideStep(
+                number: 2,
+                icon: Icons.tune_rounded,
+                title: 'Mas opciones de sonido',
+                description:
+                    'Baja hasta el final y haz click en '
+                    '"Mas opciones de sonido" o "Panel de control de sonido"',
+              ),
+              const SizedBox(height: 12),
+              const _GuideStep(
+                number: 3,
+                icon: Icons.mic_external_on_rounded,
+                title: 'Pestana "Grabacion"',
+                description:
+                    'Ve a la pestana "Grabacion", click derecho en el area vacia '
+                    'y marca "Mostrar dispositivos deshabilitados"',
+              ),
+              const SizedBox(height: 12),
+              const _GuideStep(
+                number: 4,
+                icon: Icons.check_circle_outline_rounded,
+                title: 'Habilitar Stereo Mix',
+                description:
+                    'Aparecera "Stereo Mix" o "Mezcla estereo" en gris. '
+                    'Click derecho sobre el → "Habilitar"',
+              ),
+              const SizedBox(height: 12),
+              const _GuideStep(
+                number: 5,
+                icon: Icons.restart_alt_rounded,
+                title: 'Reiniciar EasyExpert',
+                description:
+                    'Cierra y vuelve a abrir EasyExpert. El audio del sistema '
+                    'se detectara automaticamente.',
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Process.start('cmd', [
+                          '/c',
+                          'start',
+                          'ms-settings:sound',
+                        ]);
+                      },
+                      icon: const Icon(Icons.open_in_new, size: 16),
+                      label: const Text('Abrir Sonido'),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: FilledButton(
+                      style: FilledButton.styleFrom(
+                        backgroundColor: const Color(0xFF5CB2FF),
+                        foregroundColor: const Color(0xFF08101C),
+                      ),
+                      onPressed: () => Navigator.of(context).pop(),
+                      child: const Text('Entendido'),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _GuideStep extends StatelessWidget {
+  const _GuideStep({
+    required this.number,
+    required this.icon,
+    required this.title,
+    required this.description,
+  });
+
+  final int number;
+  final IconData icon;
+  final String title;
+  final String description;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        Container(
+          width: 28,
+          height: 28,
+          decoration: BoxDecoration(
+            color: const Color(0xFF5CB2FF).withValues(alpha: 0.15),
+            shape: BoxShape.circle,
+          ),
+          alignment: Alignment.center,
+          child: Text(
+            '$number',
+            style: const TextStyle(
+              color: Color(0xFF5CB2FF),
+              fontWeight: FontWeight.w700,
+              fontSize: 13,
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                children: [
+                  Icon(icon, size: 16, color: const Color(0xFF5CB2FF)),
+                  const SizedBox(width: 6),
+                  Text(
+                    title,
+                    style: const TextStyle(
+                      fontWeight: FontWeight.w600,
+                      fontSize: 13,
+                      color: Colors.white,
+                    ),
+                  ),
+                ],
+              ),
+              const SizedBox(height: 3),
+              Text(
+                description,
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.white.withValues(alpha: 0.55),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ],
+    );
+  }
 }

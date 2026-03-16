@@ -5,6 +5,8 @@ import 'package:window_manager/window_manager.dart';
 import '../services/auth_api.dart';
 import '../services/auth_session_manager.dart';
 
+const String _appVersion = '1.3.7';
+
 enum _AuthMode {
   login,
   register,
@@ -272,7 +274,7 @@ class _AuthScreenState extends State<AuthScreen> {
                 padding: const EdgeInsets.symmetric(horizontal: 24, vertical: 28),
                 child: Center(
                   child: ConstrainedBox(
-                    constraints: const BoxConstraints(maxWidth: 560),
+                    constraints: const BoxConstraints(maxWidth: 400),
                     child: Column(
                       children: [
                         Image.asset(
@@ -546,6 +548,14 @@ class _AuthScreenState extends State<AuthScreen> {
                             ),
                           ],
                             ],
+                          ),
+                        ),
+                        const SizedBox(height: 16),
+                        Text(
+                          'v$_appVersion',
+                          style: TextStyle(
+                            color: Colors.white.withValues(alpha: 0.3),
+                            fontSize: 12,
                           ),
                         ),
                       ],

@@ -1,5 +1,8 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
+import 'package:window_manager/window_manager.dart';
 
 import 'services/auth_session_manager.dart';
 import 'ui/auth_screen.dart';
@@ -49,11 +52,30 @@ class _AppBootstrap extends StatefulWidget {
 
 class _AppBootstrapState extends State<_AppBootstrap> {
   late final Future<void> _initFuture;
+  bool? _wasLoggedIn;
 
   @override
   void initState() {
     super.initState();
     _initFuture = AuthSessionManager.instance.bootstrap();
+  }
+
+  Future<void> _setLoginWindowSize() async {
+    if (!Platform.isWindows) return;
+    await windowManager.setMinimumSize(const Size(480, 620));
+    await windowManager.setSize(const Size(480, 740));
+    await windowManager.center();
+  }
+
+  Future<void> _setMainWindowSize() async {
+    if (!Platform.isWindows) return;
+    final flutterView =
+        WidgetsBinding.instance.platformDispatcher.views.first;
+    final screen =
+        flutterView.physicalSize / flutterView.devicePixelRatio;
+    await windowManager.setMinimumSize(const Size(900, 600));
+    await windowManager.setSize(Size(screen.width, screen.height));
+    await windowManager.center();
   }
 
   @override
@@ -69,9 +91,18 @@ class _AppBootstrapState extends State<_AppBootstrap> {
         return ValueListenableBuilder(
           valueListenable: AuthSessionManager.instance.currentUser,
           builder: (context, user, _) {
-            if (user == null) {
-              return const AuthScreen();
+            final loggedIn = user != null;
+            if (_wasLoggedIn != loggedIn) {
+              _wasLoggedIn = loggedIn;
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (loggedIn) {
+                  _setMainWindowSize();
+                } else {
+                  _setLoginWindowSize();
+                }
+              });
             }
+            if (!loggedIn) return const AuthScreen();
             return const HomeScreen();
           },
         );

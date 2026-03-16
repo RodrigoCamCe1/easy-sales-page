@@ -10,6 +10,7 @@ import 'package:path/path.dart' as p;
 import '../core/app_config.dart';
 import '../models/conversation.dart';
 import '../models/session_models.dart';
+import 'audio_device_utils.dart';
 import 'auth_session_manager.dart';
 import 'backend_data_api.dart';
 import 'conversation_store.dart';
@@ -45,6 +46,10 @@ class RecordingSessionController extends ChangeNotifier {
 
   /// Called when the platform audio capture reports an error.
   void Function(String error)? onPlatformCaptureError;
+
+  /// Called when no loopback device (Stereo Mix) is found, so the UI can
+  /// show a setup guide dialog.
+  VoidCallback? onNoLoopbackDeviceFound;
 
   // ── Private session state ────────────────────────────────────────────────
   bool _listening = false;
@@ -241,8 +246,7 @@ class RecordingSessionController extends ChangeNotifier {
     );
 
     _openAIClientSystem = null;
-    final hasSystemDevice =
-        Platform.isWindows && windowsAudioDevice.trim().isNotEmpty;
+    final hasSystemDevice = Platform.isWindows;
     if (hasSystemDevice) {
       _openAIClientSystem = OpenAIRealtimeClient(
         openAIKey: systemKey.isNotEmpty ? systemKey : micKey,
@@ -939,21 +943,22 @@ class RecordingSessionController extends ChangeNotifier {
   // ──────────────────────────────────────────────────────────────────────────
 
   Future<void> _startWindowsCapture() async {
-    final systemDevice = windowsAudioDevice.trim();
-    if (systemDevice.isEmpty) {
-      _statusMessage =
-          'Define WINDOWS_AUDIO_DEVICE en .env (ej. "Stereo Mix (Realtek(R) Audio)")';
-      _listening = false;
-      _safeNotify();
-      return;
-    }
-
     await _stopWindowsCapture();
 
+    // Auto-detect loopback device (Stereo Mix / Mezcla estéreo) via dshow.
+    final devices = await enumerateAudioDevices();
+    final loopback = findLoopbackDevice(devices);
+    if (loopback == null) {
+      _statusMessage = 'No se detecto Stereo Mix. Abre la guia para habilitarlo.';
+      _listening = false;
+      _safeNotify();
+      onNoLoopbackDeviceFound?.call();
+      return;
+    }
+    _addLog('Audio del sistema: ${loopback.name} (${loopback.deviceId})');
     await _startWindowsDeviceCapture(
       label: 'system',
-      device: systemDevice,
-      loopback: windowsAudioBackend == 'wasapi' && windowsAudioLoopback,
+      device: loopback.deviceId,
       onChunk: (bytes) {
         _pendingSystemBytes += bytes.length;
         _openAIClientSystem?.appendAudio(bytes);
@@ -993,23 +998,19 @@ class RecordingSessionController extends ChangeNotifier {
     required String label,
     required String device,
     required void Function(Uint8List) onChunk,
-    bool loopback = false,
     bool useInputSampleRate = true,
   }) async {
     try {
-      _addLog('Captura $label: $device (sampleRate=${useInputSampleRate ? windowsAudioSampleRate : "default"})');
+      _addLog('Captura $label: $device (dshow, sampleRate=${useInputSampleRate ? windowsAudioSampleRate : "default"})');
       final args = <String>[
         '-f',
-        windowsAudioBackend,
+        'dshow',
         if (useInputSampleRate && windowsAudioSampleRate.isNotEmpty) ...[
           '-sample_rate',
           windowsAudioSampleRate,
         ],
-        if (windowsAudioBackend == 'wasapi' && loopback) ...['-loopback', '1'],
         '-i',
-        (windowsAudioBackend == 'wasapi' && device.toLowerCase() == 'default')
-            ? 'default'
-            : 'audio=$device',
+        'audio=$device',
         '-ac',
         '1',
         '-ar',

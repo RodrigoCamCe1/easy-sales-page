@@ -89,9 +89,8 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
   bool _isProcessingFile = false;
   String? _fileError;
 
-  // Audio device selection
+  // Audio device selection (mic only — system audio uses WASAPI loopback auto)
   List<AudioDeviceInfo> _audioDevices = [];
-  String? _selectedSystemDeviceId;
   String? _selectedMicDeviceId;
   bool _loadingDevices = false;
 
@@ -115,24 +114,11 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
   Future<void> _loadAudioDevices() async {
     setState(() => _loadingDevices = true);
     final store = AudioPreferencesStore.instance;
-    _selectedSystemDeviceId = store.systemDeviceId;
     _selectedMicDeviceId = store.micDeviceId;
     final devices = await enumerateAudioDevices();
     if (!mounted) return;
     setState(() {
       _audioDevices = devices;
-      // Ensure saved values are in the list; if not, keep them as fallback
-      if (_selectedSystemDeviceId != null &&
-          _selectedSystemDeviceId!.isNotEmpty &&
-          !_audioDevices.any((d) => d.deviceId == _selectedSystemDeviceId)) {
-        _audioDevices.insert(
-          0,
-          AudioDeviceInfo(
-            name: store.systemDevice,
-            altName: store.systemDeviceId,
-          ),
-        );
-      }
       if (_selectedMicDeviceId != null &&
           _selectedMicDeviceId!.isNotEmpty &&
           !_audioDevices.any((d) => d.deviceId == _selectedMicDeviceId)) {
@@ -146,15 +132,6 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
       }
       _loadingDevices = false;
     });
-  }
-
-  Future<void> _onSystemDeviceChanged(AudioDeviceInfo? device) async {
-    if (device == null) return;
-    setState(() => _selectedSystemDeviceId = device.deviceId);
-    final store = AudioPreferencesStore.instance;
-    store.systemDevice = device.name;
-    store.systemDeviceId = device.deviceId;
-    await store.save();
   }
 
   Future<void> _onMicDeviceChanged(AudioDeviceInfo? device) async {
@@ -354,13 +331,6 @@ class _SettingsWindowPageState extends State<SettingsWindowPage> {
                           ),
                         )
                       else ...[
-                        _AudioDeviceDropdown(
-                          label: 'Audio del sistema',
-                          selectedDeviceId: _selectedSystemDeviceId,
-                          devices: _audioDevices,
-                          onChanged: _onSystemDeviceChanged,
-                        ),
-                        const SizedBox(height: 8),
                         _AudioDeviceDropdown(
                           label: 'Microfono',
                           selectedDeviceId: _selectedMicDeviceId,

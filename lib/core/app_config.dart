@@ -30,13 +30,9 @@ String get openAIRealtimeModel =>
 String get systemPrompt =>
     dotenv.env['SYSTEM_PROMPT'] ?? 'Eres un agente de IA que responde de forma clara y breve.';
 
-String get windowsAudioDevice => AudioPreferencesStore.instance.systemDeviceId;
 String get windowsMicDevice => AudioPreferencesStore.instance.micDeviceId;
-String get windowsAudioBackend => dotenv.env['WINDOWS_AUDIO_BACKEND'] ?? 'dshow';
 String get windowsAudioSampleRate =>
     dotenv.env['WINDOWS_AUDIO_SAMPLE_RATE'] ?? '';
-bool get windowsAudioLoopback =>
-    (dotenv.env['WINDOWS_AUDIO_LOOPBACK'] ?? '').toLowerCase() == 'true';
 
 String get promptFilePath => p.join(Directory.current.path, promptFileName);
 File get promptFile => File(promptFilePath);
