@@ -8,18 +8,45 @@ window.addEventListener('scroll', () => {
   }
 }, { passive: true });
 
-// Scroll animations
-const animatedElements = document.querySelectorAll('.animate-on-scroll, .stagger-in, .footer-reveal');
+// Scroll animations (general)
+const animatedElements = document.querySelectorAll('.animate-on-scroll, .footer-reveal');
 const observer = new IntersectionObserver((entries) => {
   entries.forEach(entry => {
     if (entry.isIntersecting) {
       entry.target.classList.add('visible');
-      observer.unobserve(entry.target);
+    } else {
+      entry.target.classList.remove('visible');
     }
   });
 }, { threshold: 0.1, rootMargin: '0px 0px -60px 0px' });
 
 animatedElements.forEach(el => observer.observe(el));
+
+// Feature cards — enter early, exit when fully out of viewport
+const featureCards = document.querySelectorAll('.feature-card');
+
+// Enter observer: triggers early (80px before entering viewport)
+const featureEnterObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (entry.isIntersecting) {
+      entry.target.classList.add('visible');
+    }
+  });
+}, { threshold: 0.05, rootMargin: '0px 0px 80px 0px' });
+
+// Exit observer: removes visible when card leaves the viewport
+const featureExitObserver = new IntersectionObserver((entries) => {
+  entries.forEach(entry => {
+    if (!entry.isIntersecting) {
+      entry.target.classList.remove('visible');
+    }
+  });
+}, { threshold: 0, rootMargin: '0px 0px 0px 0px' });
+
+featureCards.forEach(card => {
+  featureEnterObserver.observe(card);
+  featureExitObserver.observe(card);
+});
 
 // Dynamic version from GitHub releases (optional, graceful fallback)
 async function fetchLatestVersion() {
