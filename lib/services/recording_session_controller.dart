@@ -81,6 +81,7 @@ class RecordingSessionController extends ChangeNotifier {
   final List<ChatMessage> _chatResponses = [];
   final List<String> _suggestions = [];
   final List<String> _transcripts = [];
+  final List<String> _debugLogs = [];
   String _currentTranscriptSys = '';
   String _currentTranscriptMic = '';
   String? _lastSysLine;
@@ -120,6 +121,7 @@ class RecordingSessionController extends ChangeNotifier {
   String get currentTranscriptMic => _currentTranscriptMic;
   DateTime? get sessionStartedAt => _sessionStartedAt;
   DateTime? get sessionEndedAt => _sessionEndedAt;
+  List<String> get debugLogs => List.unmodifiable(_debugLogs);
 
   // ── Platform helpers ─────────────────────────────────────────────────────
   bool get _systemOnlyMode => Platform.isWindows;
@@ -217,19 +219,19 @@ class RecordingSessionController extends ChangeNotifier {
     _systemWordsAtLastResponse = 0;
     _statusMessage = 'Conectando con OpenAI';
 
-    _addLog('Iniciando sesion con OpenAI');
+    _addLog('🟢 Conectando con OpenAI...');
     final promptPreview = promptOverride.length > 120
         ? '${promptOverride.substring(0, 120)}...'
         : promptOverride;
-    _addLog('Prompt activo: $promptPreview');
+    _addLog('📋 Agente cargado: $promptPreview');
 
     // RAG: fetch relevant document chunks before connecting
     _ragContext = '';
     if (activeAgentId.isNotEmpty) {
-      _addLog('Buscando contexto RAG para agente $activeAgentId...');
+      _addLog('🔍 Buscando documentos del agente...');
       _ragContext = await _fetchRAGContext(promptOverride);
       if (_ragContext.isNotEmpty) {
-        _addLog('Contexto RAG obtenido (${_ragContext.length} chars)');
+        _addLog('✅ Documentos del agente cargados');
       }
     }
 
@@ -319,7 +321,7 @@ class RecordingSessionController extends ChangeNotifier {
     if (Platform.isWindows) {
       await _stopWindowsCapture();
     } else if (_audioSupported) {
-      _addLog('Deteniendo flutter_audio_capture');
+      _addLog('🔴 Deteniendo captura de audio');
       onRequestStopPlatformCapture?.call();
     }
 
@@ -793,7 +795,7 @@ class RecordingSessionController extends ChangeNotifier {
       await ConversationStore.instance.add(conversation);
       lastSavedConversationId = conversationId;
     } catch (error) {
-      _addLog('No se pudo guardar conversacion: $error');
+      _addLog('⚠️ No se pudo guardar la conversación');
       if (!_disposed) {
         _statusMessage = 'No se pudo guardar la asesoria';
         _safeNotify();
@@ -947,30 +949,48 @@ class RecordingSessionController extends ChangeNotifier {
 
     // Auto-detect loopback device (Stereo Mix / Mezcla estéreo) via dshow.
     final devices = await enumerateAudioDevices();
+    _addLog('🎧 Buscando dispositivos de audio...');
+    _addLog('🎧 Se encontraron ${devices.length} dispositivo(s):');
+    for (final d in devices) {
+      _addLog('   🔹 ${d.name}');
+    }
     final loopback = findLoopbackDevice(devices);
-    if (loopback == null) {
-      _statusMessage = 'No se detecto Stereo Mix. Abre la guia para habilitarlo.';
-      _listening = false;
+
+    bool systemAudioActive = false;
+    if (loopback != null) {
+      _addLog('✅ Audio del sistema detectado: ${loopback.name}');
+      await _startWindowsDeviceCapture(
+        label: 'system',
+        device: loopback.deviceId,
+        onChunk: (bytes) {
+          _pendingSystemBytes += bytes.length;
+          _openAIClientSystem?.appendAudio(bytes);
+          _logAudioLevel(bytes, label: 'system');
+        },
+      );
+      systemAudioActive = _audioProcessSystem != null;
+      if (!systemAudioActive) {
+        _addLog('⚠️ No se pudo capturar con ID del dispositivo, reintentando con nombre...');
+        await _startWindowsDeviceCapture(
+          label: 'system',
+          device: loopback.name,
+          onChunk: (bytes) {
+            _pendingSystemBytes += bytes.length;
+            _openAIClientSystem?.appendAudio(bytes);
+            _logAudioLevel(bytes, label: 'system');
+          },
+        );
+        systemAudioActive = _audioProcessSystem != null;
+      }
+    } else {
+      _addLog('❌ No se encontró Stereo Mix entre los dispositivos. La IA no podrá escuchar el audio del sistema.');
+    }
+
+    if (!systemAudioActive) {
+      _addLog('❌ Sin audio del sistema — la IA no generará respuestas. Habilita Stereo Mix.');
+      _statusMessage = 'Sin Stereo Mix. Abre la guía para habilitarlo.';
       _safeNotify();
       onNoLoopbackDeviceFound?.call();
-      return;
-    }
-    _addLog('Audio del sistema: ${loopback.name} (${loopback.deviceId})');
-    await _startWindowsDeviceCapture(
-      label: 'system',
-      device: loopback.deviceId,
-      onChunk: (bytes) {
-        _pendingSystemBytes += bytes.length;
-        _openAIClientSystem?.appendAudio(bytes);
-        _logAudioLevel(bytes, label: 'system');
-      },
-    );
-
-    if (_audioProcessSystem == null) {
-      _statusMessage =
-          'Conectado a OpenAI, pero no se pudo iniciar captura de audio del sistema.';
-      _safeNotify();
-      return;
     }
 
     final micDevice = windowsMicDevice.trim();
@@ -988,9 +1008,10 @@ class RecordingSessionController extends ChangeNotifier {
       );
     }
 
-    _statusMessage = includeMic
-        ? 'EasyExpert iniciada: conectada a OpenAI (sistema + microfono). Ya puedes hablar.'
-        : 'EasyExpert iniciada: conectada a OpenAI. Ya puedes hablar.';
+    final modeDesc = systemAudioActive
+        ? (includeMic ? 'sistema + micrófono' : 'sistema')
+        : (includeMic ? 'solo micrófono (fallback)' : 'sin audio');
+    _statusMessage = 'EasyExpert iniciada: conectada a OpenAI ($modeDesc). Ya puedes hablar.';
     _safeNotify();
   }
 
@@ -1001,7 +1022,8 @@ class RecordingSessionController extends ChangeNotifier {
     bool useInputSampleRate = true,
   }) async {
     try {
-      _addLog('Captura $label: $device (dshow, sampleRate=${useInputSampleRate ? windowsAudioSampleRate : "default"})');
+      final labelName = label == 'system' ? 'audio del sistema' : 'micrófono';
+      _addLog('🎤 Iniciando captura de $labelName...');
       final args = <String>[
         '-f',
         'dshow',
@@ -1024,7 +1046,7 @@ class RecordingSessionController extends ChangeNotifier {
       final process = await Process.start(ffmpegPath, args);
       final subscription = process.stdout.listen(
         (chunk) => onChunk(Uint8List.fromList(chunk)),
-        onDone: () => _addLog('ffmpeg ($label) stdout cerrado'),
+        onDone: () => _addLog('🔴 Captura de ${label == 'system' ? 'audio del sistema' : 'micrófono'} finalizada'),
         onError: (error) {
           _statusMessage = 'Error en ffmpeg ($label): $error';
           _safeNotify();
@@ -1040,20 +1062,23 @@ class RecordingSessionController extends ChangeNotifier {
       }
 
       process.exitCode.then((code) {
-        _addLog('ffmpeg ($label) finalizo con codigo $code');
-        if (code != 0) {
-          _addLog('⚠️ ffmpeg ($label) salió con error $code — revisa dispositivo/configuración');
+        final labelName = label == 'system' ? 'audio del sistema' : 'micrófono';
+        if (code == 0) {
+          _addLog('✅ Captura de $labelName terminó correctamente');
+        } else {
+          _addLog('❌ Error en captura de $labelName (código $code) — verifica que el dispositivo esté habilitado');
         }
       });
 
       process.stderr.transform(const Utf8Decoder()).listen((line) {
         // Always log mic stderr so mic failures are visible
         if (showFfmpegLogs || label == 'mic') {
-          _addLog('ffmpeg ($label) stderr: $line');
+          _addLog('⚙️ [$label] $line');
         }
       });
     } catch (error) {
-      _addLog('ffmpeg ($label) no se pudo iniciar: $error');
+      final labelName = label == 'system' ? 'audio del sistema' : 'micrófono';
+      _addLog('❌ No se pudo iniciar la captura de $labelName: $error');
       _statusMessage =
           'No se pudo iniciar ffmpeg ($label); instala la herramienta y comprueba el dispositivo.';
       _listening = false;
@@ -1611,7 +1636,10 @@ class RecordingSessionController extends ChangeNotifier {
 
   void _addLog(String entry) {
     final timestamp = DateTime.now().toIso8601String();
-    debugPrint('[$timestamp] $entry');
+    final line = '[$timestamp] $entry';
+    debugPrint(line);
+    _debugLogs.add(line);
+    if (_debugLogs.length > 500) _debugLogs.removeAt(0);
   }
 
   bool _isLikelyVoiceLine(String line) {
@@ -1664,7 +1692,9 @@ class RecordingSessionController extends ChangeNotifier {
     }
     final rms = math.sqrt(sumSquares / samples);
     final db = 20 * math.log(rms / 32768 + 1e-6) / math.ln10;
-    _addLog('Audio [$label] RMS dBFS: ${db.toStringAsFixed(1)}');
+    final labelName = label == 'system' ? 'Sistema' : 'Micrófono';
+    final level = db > -10 ? '🔊 Alto' : db > -30 ? '🔉 Normal' : db > -50 ? '🔈 Bajo' : '🔇 Muy bajo/silencio';
+    _addLog('🎚️ $labelName: $level (${db.toStringAsFixed(0)} dB)');
   }
 
   Uint8List _floatTo16(List<double> source) {

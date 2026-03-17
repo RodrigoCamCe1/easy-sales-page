@@ -5,7 +5,7 @@ import 'package:window_manager/window_manager.dart';
 import '../services/auth_api.dart';
 import '../services/auth_session_manager.dart';
 
-const String _appVersion = '1.3.7';
+const String _appVersion = '1.3.8';
 
 enum _AuthMode {
   login,

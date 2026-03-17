@@ -52,6 +52,7 @@ class RecordingBar extends StatefulWidget {
 class _RecordingBarState extends State<RecordingBar> {
   // ── UI-only state ──────────────────────────────────────────────────────────
   bool _showTranscript = false;
+  bool _showDebugLogs = false;
   bool _suggestionsSidebarOpen = true;
   bool _invisibleMode = false;
 
@@ -487,6 +488,17 @@ class _RecordingBarState extends State<RecordingBar> {
                                   activeColor: const Color(0xFF5CB2FF),
                                   isActive: _invisibleMode,
                                 ),
+                                _QuickChip(
+                                  label: _showDebugLogs ? 'Ocultar logs' : 'Logs',
+                                  icon: Icons.bug_report_rounded,
+                                  onTap: () {
+                                    setState(() {
+                                      _showDebugLogs = !_showDebugLogs;
+                                    });
+                                  },
+                                  activeColor: const Color(0xFFFF9800),
+                                  isActive: _showDebugLogs,
+                                ),
                               ],
                             ),
                           ),
@@ -567,24 +579,28 @@ class _RecordingBarState extends State<RecordingBar> {
                                     : const SizedBox.shrink(),
                               ),
                               Expanded(
-                                child: _showTranscript
-                                    ? _TranscriptionPane(
-                                        controller:
-                                            _transcriptScrollController,
-                                        entries: _controller
-                                            .buildTranscriptEntries(),
-                                        emptyText:
-                                            'Esperando audio para transcribir',
+                                child: _showDebugLogs
+                                    ? _DebugLogsPane(
+                                        logs: _controller.debugLogs,
                                       )
-                                    : _ChatPane(
-                                        controller: _chatScrollController,
-                                        messages:
-                                            _controller.chatResponses,
-                                        emptyText:
-                                            _controller.statusMessage,
-                                        isThinking:
-                                            _controller.responseInFlight,
-                                      ),
+                                    : _showTranscript
+                                        ? _TranscriptionPane(
+                                            controller:
+                                                _transcriptScrollController,
+                                            entries: _controller
+                                                .buildTranscriptEntries(),
+                                            emptyText:
+                                                'Esperando audio para transcribir',
+                                          )
+                                        : _ChatPane(
+                                            controller: _chatScrollController,
+                                            messages:
+                                                _controller.chatResponses,
+                                            emptyText:
+                                                _controller.statusMessage,
+                                            isThinking:
+                                                _controller.responseInFlight,
+                                          ),
                               ),
                             ],
                           ),
@@ -1199,6 +1215,59 @@ class _GuideStep extends StatelessWidget {
           ),
         ),
       ],
+    );
+  }
+}
+
+class _DebugLogsPane extends StatelessWidget {
+  const _DebugLogsPane({required this.logs});
+
+  final List<String> logs;
+
+  @override
+  Widget build(BuildContext context) {
+    final colorScheme = Theme.of(context).colorScheme;
+    if (logs.isEmpty) {
+      return Center(
+        child: Text(
+          'Sin logs todavía. Inicia una sesión para ver actividad.',
+          style: Theme.of(context).textTheme.bodyMedium?.copyWith(
+                color: colorScheme.onSurface.withOpacity(0.6),
+              ),
+        ),
+      );
+    }
+
+    return ListView.builder(
+      physics: const ClampingScrollPhysics(),
+      padding: const EdgeInsets.only(top: 4, bottom: 10),
+      itemCount: logs.length,
+      reverse: true,
+      itemBuilder: (context, index) {
+        final log = logs[logs.length - 1 - index];
+        final isError = log.contains('❌');
+        final isWarning = log.contains('⚠️');
+        final isSuccess = log.contains('✅');
+        final textColor = isError
+            ? const Color(0xFFE53935)
+            : isWarning
+                ? const Color(0xFFFF9800)
+                : isSuccess
+                    ? const Color(0xFF4CAF50)
+                    : colorScheme.onSurface.withOpacity(0.8);
+        return Padding(
+          padding: const EdgeInsets.symmetric(vertical: 1),
+          child: Text(
+            log,
+            style: TextStyle(
+              fontFamily: 'Consolas',
+              fontSize: 11,
+              color: textColor,
+              height: 1.4,
+            ),
+          ),
+        );
+      },
     );
   }
 }
