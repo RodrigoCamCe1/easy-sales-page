@@ -13,6 +13,7 @@ class OpenAIRealtimeClient {
     required this.onDelta,
     required this.onTranscriptDelta,
     this.onComplete,
+    this.onLog,
     this.showEvents = true,
     this.transcriptionOnly = false,
     String? sessionInstructions,
@@ -30,6 +31,10 @@ class OpenAIRealtimeClient {
   final void Function(String) onTranscriptDelta;
 
   final VoidCallback? onComplete;
+
+  /// Callback para logs visibles en la UI.
+  final void Function(String)? onLog;
+
   final bool showEvents;
 
   /// Si es true, el VAD detecta habla y transcribe pero NO genera respuestas.
@@ -39,11 +44,15 @@ class OpenAIRealtimeClient {
   IOWebSocketChannel? _channel;
   String _sessionInstructions = '';
   int _bufferedAudioBytes = 0;
+  bool _closed = false;
+  bool _reconnecting = false;
+  int _reconnectAttempts = 0;
+  static const int _maxReconnectAttempts = 5;
 
   // 24kHz * mono * 16-bit * 100ms ~= 4800 bytes.
   static const int _minCommitBytes = 4800;
 
-  // Para evitar dobles completes en un mismo “response”
+  // Para evitar dobles completes en un mismo "response"
   bool _completedThisTurn = false;
   String? _assistantStreamMode;
   String? _activeResponseId;
@@ -54,7 +63,7 @@ class OpenAIRealtimeClient {
   // TRANSCRIPT: flush por inactividad
   // =========================
   Timer? _transcriptIdleTimer;
-  bool _hasOpenTranscript = false; // hay texto “en progreso” que aún no cerró con \n
+  bool _hasOpenTranscript = false; // hay texto "en progreso" que aún no cerró con \n
   final int _transcriptIdleMs = 1100; // 900–1500 recomendado
 
   void _bumpTranscriptIdleFlush() {
@@ -63,7 +72,7 @@ class OpenAIRealtimeClient {
     _transcriptIdleTimer?.cancel();
     _transcriptIdleTimer = Timer(Duration(milliseconds: _transcriptIdleMs), () {
       if (_hasOpenTranscript) {
-        onTranscriptDelta('\n'); // cierra “la línea” en la UI
+        onTranscriptDelta('\n'); // cierra "la línea" en la UI
         _hasOpenTranscript = false;
       }
     });
@@ -79,32 +88,85 @@ class OpenAIRealtimeClient {
     }
   }
 
+  void _log(String msg) {
+    debugPrint(msg);
+    onLog?.call(msg);
+  }
+
   Future<void> connect() async {
-    final uri = Uri.parse('wss://api.openai.com/v1/realtime?model=$model');
-    final socket = await WebSocket.connect(
-      uri.toString(),
-      headers: {
-        'Authorization': 'Bearer $openAIKey',
-        'OpenAI-Beta': 'realtime=v1',
-      },
-    );
+    _closed = false;
+    _reconnectAttempts = 0;
+    await _connectInternal();
+  }
 
-    _channel = IOWebSocketChannel(socket);
+  Future<void> _connectInternal() async {
+    try {
+      final uri = Uri.parse('wss://api.openai.com/v1/realtime?model=$model');
+      final socket = await WebSocket.connect(
+        uri.toString(),
+        headers: {
+          'Authorization': 'Bearer $openAIKey',
+          'OpenAI-Beta': 'realtime=v1',
+        },
+      );
 
-    // IMPORTANTE: setear sesión apenas conecta
-    _updateSession();
+      _channel = IOWebSocketChannel(socket);
+      _reconnecting = false;
 
-    _channel?.stream.listen(
-      _handleMessage,
-      onDone: () {
-        debugPrint('OpenAI WS closed');
-        _safeCompleteOnce(reason: 'ws_onDone');
-      },
-      onError: (error) {
-        debugPrint('OpenAI WS error: $error');
-        _safeCompleteOnce(reason: 'ws_onError');
-      },
-    );
+      // IMPORTANTE: setear sesión apenas conecta
+      _updateSession();
+
+      _channel?.stream.listen(
+        _handleMessage,
+        onDone: () {
+          _log('OpenAI WS closed');
+          _safeCompleteOnce(reason: 'ws_onDone');
+          _attemptReconnect();
+        },
+        onError: (error) {
+          _log('OpenAI WS error: $error');
+          _safeCompleteOnce(reason: 'ws_onError');
+          _attemptReconnect();
+        },
+      );
+    } catch (e) {
+      _log('OpenAI WS connect failed: $e');
+      _attemptReconnect();
+    }
+  }
+
+  Future<void> _attemptReconnect() async {
+    if (_closed || _reconnecting) return;
+    _reconnecting = true;
+    _reconnectAttempts++;
+
+    if (_reconnectAttempts > _maxReconnectAttempts) {
+      _log('🔴 Reconexión fallida después de $_maxReconnectAttempts intentos. Sesión terminada.');
+      onLog?.call('❌ No se pudo reconectar con OpenAI después de $_maxReconnectAttempts intentos');
+      return;
+    }
+
+    final waitSecs = _reconnectAttempts * 2; // 2s, 4s, 6s, 8s, 10s
+    onLog?.call('🔄 Conexión con OpenAI perdida [$sourceTag]. Reconectando en ${waitSecs}s... (intento $_reconnectAttempts/$_maxReconnectAttempts)');
+
+    await Future.delayed(Duration(seconds: waitSecs));
+
+    if (_closed) return;
+
+    onLog?.call('🔄 Reconectando [$sourceTag]...');
+
+    // Reset state for new connection
+    _completedThisTurn = false;
+    _assistantStreamMode = null;
+    _activeResponseId = null;
+    _bufferedAudioBytes = 0;
+
+    await _connectInternal();
+
+    if (_channel != null && !_closed) {
+      _reconnectAttempts = 0;
+      onLog?.call('✅ Reconexión exitosa [$sourceTag]');
+    }
   }
 
   void _updateSession() {
@@ -186,6 +248,7 @@ class OpenAIRealtimeClient {
   }
 
   Future<void> close() async {
+    _closed = true;
     _transcriptIdleTimer?.cancel();
     _transcriptIdleTimer = null;
     _userTranscriptAccum.clear();
@@ -220,7 +283,8 @@ class OpenAIRealtimeClient {
         return; // commit_empty es esperado con server_vad
       }
       final msg = _extractErrorMessage(payload);
-      debugPrint('OpenAI[$sourceTag] ERROR: $msg');
+      _log('OpenAI[$sourceTag] ERROR: $msg');
+      onLog?.call('⚠️ Error de OpenAI [$sourceTag]: $msg');
       _safeCompleteOnce(reason: 'type=error');
       return;
     }
@@ -359,7 +423,7 @@ class OpenAIRealtimeClient {
         type == 'response.error') {
       if (type == 'response.error') {
         final msg = _extractErrorMessage(payload);
-        debugPrint('OpenAI response.error: $msg');
+        _log('OpenAI response.error: $msg');
       }
       _safeCompleteOnce(reason: type);
       return;
@@ -462,7 +526,7 @@ class OpenAIRealtimeClient {
     return current;
   }
 
-  /// Extrae texto “simple” (delta/text/transcript/content) desde payload genérico.
+  /// Extrae texto "simple" (delta/text/transcript/content) desde payload genérico.
   String _extractAnyText(Map<String, dynamic> payload) {
     final delta = payload['delta'];
     if (delta is String) return delta;

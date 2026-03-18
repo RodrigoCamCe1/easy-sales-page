@@ -243,6 +243,7 @@ class RecordingSessionController extends ChangeNotifier {
       onDelta: (_) {},
       onTranscriptDelta: (t) => _appendTranscriptDelta(t, source: 'mic'),
       onComplete: () => _appendTranscriptDelta('\n', source: 'mic'),
+      onLog: _addLog,
       showEvents: showOpenAIEvents,
       sourceTag: 'mic',
     );
@@ -261,6 +262,7 @@ class RecordingSessionController extends ChangeNotifier {
           _appendTranscriptDelta('\n', source: 'sys');
           _handleResponseComplete();
         },
+        onLog: _addLog,
         showEvents: showOpenAIEvents,
         sourceTag: 'system',
       );
