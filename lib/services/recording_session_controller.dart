@@ -131,13 +131,12 @@ class RecordingSessionController extends ChangeNotifier {
       Platform.isAndroid || Platform.isIOS || Platform.isLinux;
 
   // ── Constants ────────────────────────────────────────────────────────────
-  static const Duration _voiceResponseMinInterval = Duration(seconds: 15);
+  static const Duration _voiceResponseMinInterval = Duration(seconds: 8);
   static const int _transcriptIdleFlushMs = 1700;
   static const Duration _micTranscriptMergeWindow = Duration(seconds: 6);
   static const Duration _autoStopSilenceTimeout = Duration(seconds: 21);
-  static const int _minSystemWordsPerTurn = 15;
-  static const int _minSystemCharsPerTurn = 60;
-  static const int _novelSystemWordsToBypassCooldown = 15;
+  static const int _minSystemCharsPerTurn = 15;
+  static const int _novelSystemWordsToBypassCooldown = 6;
 
   // ── Chat prefixes ────────────────────────────────────────────────────────
   static const List<String> _chatPrefixes = [
@@ -569,6 +568,7 @@ class RecordingSessionController extends ChangeNotifier {
             _lastSysTranscriptAt = now;
             _lastMicTranscriptAt = null;
             _systemWordsAccum += _wordCount(normalized);
+            _addLog('🖥️ Audio sistema transcribió: "${normalized.length > 50 ? '${normalized.substring(0, 50)}...' : normalized}"');
             _triggerResponseFromTranscript(
               source: 'sys',
               transcriptLine: normalized,
@@ -815,12 +815,16 @@ class RecordingSessionController extends ChangeNotifier {
   }) {
     final normalizedSource = source.toLowerCase().trim() == 'sys' ? 'sys' : 'mic';
     if (!_listening) return;
-    if (normalizedSource != 'sys') return;
+    if (normalizedSource != 'sys') {
+      _addLog('ℹ️ Transcripción del mic ignorada para respuesta (solo audio del sistema genera respuestas)');
+      return;
+    }
 
     final cleanedLine = transcriptLine.trim();
-    if (!_isLikelyVoiceLine(cleanedLine)) return;
-    if (cleanedLine.length < _minSystemCharsPerTurn) return;
-    if (_wordCount(cleanedLine) < _minSystemWordsPerTurn) return;
+    if (cleanedLine.length < _minSystemCharsPerTurn) {
+      _addLog('ℹ️ Audio del sistema: línea muy corta (${cleanedLine.length} chars, mínimo $_minSystemCharsPerTurn)');
+      return;
+    }
 
     final now = DateTime.now();
     final key = cleanedLine.toLowerCase();
@@ -829,20 +833,26 @@ class RecordingSessionController extends ChangeNotifier {
     if (_lastVoiceTriggerKey == key &&
         _lastVoiceTriggerAt != null &&
         now.difference(_lastVoiceTriggerAt!) < const Duration(seconds: 12)) {
+      _addLog('ℹ️ Audio del sistema: línea duplicada, ignorada');
       return;
     }
 
-    if (_responseInFlight || _micResponseInFlight) return;
+    if (_responseInFlight || _micResponseInFlight) {
+      _addLog('ℹ️ Audio del sistema: respuesta ya en curso, encolando');
+      return;
+    }
 
     final novelWords = _systemWordsAccum - _systemWordsAtLastResponse;
     if (_lastVoiceTriggerAt != null &&
         now.difference(_lastVoiceTriggerAt!) < _voiceResponseMinInterval &&
         novelWords < _novelSystemWordsToBypassCooldown) {
+      _addLog('ℹ️ Audio del sistema: cooldown activo ($novelWords palabras nuevas, necesita $_novelSystemWordsToBypassCooldown)');
       return;
     }
     _lastVoiceTriggerAt = now;
     _lastVoiceTriggerKey = key;
     _systemWordsAtLastResponse = _systemWordsAccum;
+    _addLog('✅ Audio del sistema: disparando respuesta (${_wordCount(cleanedLine)} palabras detectadas)');
     _startVoiceTriggeredResponse(
       source: normalizedSource,
       statusMessage: 'Procesando voz detectada',
@@ -1073,8 +1083,7 @@ class RecordingSessionController extends ChangeNotifier {
       });
 
       process.stderr.transform(const Utf8Decoder()).listen((line) {
-        // Always log mic stderr so mic failures are visible
-        if (showFfmpegLogs || label == 'mic') {
+        if (showFfmpegLogs) {
           _addLog('⚙️ [$label] $line');
         }
       });
@@ -1642,12 +1651,6 @@ class RecordingSessionController extends ChangeNotifier {
     debugPrint(line);
     _debugLogs.add(line);
     if (_debugLogs.length > 500) _debugLogs.removeAt(0);
-  }
-
-  bool _isLikelyVoiceLine(String line) {
-    final t = line.trim();
-    if (t.isEmpty || t.length < 3) return false;
-    return RegExp(r'[A-Za-z0-9ÁÉÍÓÚáéíóúÑñ]').hasMatch(t);
   }
 
   bool _isShortInterjection(String text) {

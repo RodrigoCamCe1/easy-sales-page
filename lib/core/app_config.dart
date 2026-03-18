@@ -8,7 +8,7 @@ import '../services/audio_preferences_store.dart';
 const double barHeight = 280.0;
 const String dartDefineOpenAIKey = String.fromEnvironment('OPENAI_API_KEY');
 const String defaultOpenAIRealtimeModel = 'gpt-4o-realtime-preview';
-const bool showFfmpegLogs = true;
+const bool showFfmpegLogs = false;
 const bool showOpenAIEvents = false;
 const String promptFileName = 'prompt.txt';
 const int defaultVadSilenceMs = 1000;

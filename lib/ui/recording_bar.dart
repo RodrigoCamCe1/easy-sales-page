@@ -81,8 +81,12 @@ class _RecordingBarState extends State<RecordingBar> {
   void _scrollToBottom(ScrollController ctrl) {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!ctrl.hasClients) return;
+      final pos = ctrl.position;
+      final distanceFromBottom = pos.maxScrollExtent - pos.pixels;
+      // Solo auto-scroll si el usuario está cerca del fondo (< 50px)
+      if (distanceFromBottom > 100) return;
       ctrl.animateTo(
-        ctrl.position.maxScrollExtent,
+        pos.maxScrollExtent,
         duration: const Duration(milliseconds: 200),
         curve: Curves.easeOut,
       );
