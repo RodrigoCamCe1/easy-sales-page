@@ -51,7 +51,7 @@ featureCards.forEach(card => {
 // Dynamic version from GitHub releases (optional, graceful fallback)
 async function fetchLatestVersion() {
   try {
-    const res = await fetch('https://api.github.com/repos/jfprsmcp/easy-sales-ia/releases/latest');
+    const res = await fetch('https://api.github.com/repos/RodrigoCamCe1/easy-sales-page/releases/latest');
     if (!res.ok) return;
     const data = await res.json();
     const version = data.tag_name ? data.tag_name.replace(/^v/, '') : null;
