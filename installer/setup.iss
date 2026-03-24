@@ -2,7 +2,7 @@
 ; Generates a Windows installer for the Flutter desktop app
 
 #define MyAppName "EasyExpert"
-#define MyAppVersion "1.3.9"
+#define MyAppVersion "1.4.8"
 #define MyAppPublisher "EasySales IA"
 #define MyAppExeName "EasyExpert.exe"
 
@@ -23,6 +23,8 @@ PrivilegesRequired=lowest
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesInstallIn64BitMode=x64compatible
 DisableProgramGroupPage=yes
+CloseApplications=force
+RestartApplications=yes
 
 [Languages]
 Name: "spanish"; MessagesFile: "compiler:Languages\Spanish.isl"
@@ -39,4 +41,4 @@ Name: "{autodesktop}\{#MyAppName}"; Filename: "{app}\{#MyAppExeName}"; Tasks: de
 Name: "desktopicon"; Description: "Crear acceso directo en el escritorio"
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "Iniciar {#MyAppName}"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Description: "Iniciar {#MyAppName}"; Flags: nowait postinstall

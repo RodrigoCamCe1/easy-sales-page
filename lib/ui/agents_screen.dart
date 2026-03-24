@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 
 import '../models/agent_profile.dart';
 import '../services/agent_profile_store.dart';
+import 'loading_overlay.dart';
 
 const List<String> _communicationStyles = [
   'formal',
@@ -22,6 +23,7 @@ class _AgentsScreenState extends State<AgentsScreen> {
   AgentConfig? _config;
   bool _loading = true;
   bool _hasChanges = false;
+  String? _switchingAgent;
 
   @override
   void initState() {
@@ -43,11 +45,13 @@ class _AgentsScreenState extends State<AgentsScreen> {
   }
 
   Future<void> _selectAgent(AgentProfile agent) async {
+    setState(() => _switchingAgent = agent.name);
     final next = await AgentProfileStore.instance.setActiveAgent(agent.id);
     if (!mounted) return;
     setState(() {
       _config = next;
       _hasChanges = true;
+      _switchingAgent = null;
     });
     _closeScreen();
   }
@@ -115,6 +119,41 @@ class _AgentsScreenState extends State<AgentsScreen> {
       if (!mounted) return;
       _showError(error.toString());
     }
+  }
+
+  Widget _buildPromptGuide() {
+    const guideStyle = TextStyle(fontSize: 12, color: Colors.white70, height: 1.5);
+    const boldStyle = TextStyle(fontSize: 12, color: Colors.white, fontWeight: FontWeight.w600, height: 1.5);
+    const codeStyle = TextStyle(fontSize: 11, color: Colors.amber, fontFamily: 'monospace', height: 1.5);
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        const Text('Tu prompt define cómo se comporta el agente. Sigue esta estructura:', style: guideStyle),
+        const SizedBox(height: 10),
+        const Text('1. Identidad y rol', style: boldStyle),
+        const Text('Define quién es el agente, su personalidad y objetivo.', style: guideStyle),
+        const Text('Ej: "Eres un asesor de ventas consultivo llamado Facilito..."', style: codeStyle),
+        const SizedBox(height: 8),
+        const Text('2. Contexto del producto/servicio', style: boldStyle),
+        const Text('Describe qué vendes, diferenciadores y perfil del cliente.', style: guideStyle),
+        const SizedBox(height: 8),
+        const Text('3. Metodología o pasos a seguir', style: boldStyle),
+        const Text('Indica las fases de la conversación (apertura, diagnóstico, cierre, etc).', style: guideStyle),
+        const SizedBox(height: 8),
+        const Text('4. Manejo de objeciones', style: boldStyle),
+        const Text('Lista objeciones comunes con respuestas modelo.', style: guideStyle),
+        const SizedBox(height: 8),
+        const Text('5. Formato de respuesta', style: boldStyle),
+        const Text(
+          'La app genera automáticamente respuestas y preguntas sugeridas. '
+          'Para mejores resultados, evita incluir instrucciones de formato '
+          'propias (como JSON, markdown o estructuras personalizadas) que '
+          'puedan interferir con el formato interno de la app.',
+          style: guideStyle,
+        ),
+      ],
+    );
   }
 
   void _showError(String message) {
@@ -269,6 +308,21 @@ class _AgentsScreenState extends State<AgentsScreen> {
                           border: const OutlineInputBorder(),
                         ),
                       ),
+                      if (canEditPrompt) ...[
+                        const SizedBox(height: 10),
+                        ExpansionTile(
+                          tilePadding: const EdgeInsets.symmetric(horizontal: 8),
+                          childrenPadding: const EdgeInsets.fromLTRB(12, 0, 12, 12),
+                          leading: const Icon(Icons.help_outline, size: 18, color: Colors.amber),
+                          title: const Text(
+                            'Guía para escribir un buen prompt',
+                            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+                          ),
+                          children: [
+                            _buildPromptGuide(),
+                          ],
+                        ),
+                      ],
                       if (canEditPrompt && agentId != null) ...[
                         const SizedBox(height: 16),
                         Row(
@@ -391,7 +445,9 @@ class _AgentsScreenState extends State<AgentsScreen> {
     final textTheme = Theme.of(context).textTheme;
     final config = _config;
 
-    return Scaffold(
+    return Stack(
+      children: [
+        Scaffold(
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -476,6 +532,10 @@ class _AgentsScreenState extends State<AgentsScreen> {
           ),
         ),
       ),
+    ), // end Scaffold
+        if (_switchingAgent != null)
+          LoadingOverlay(message: 'Cambiando a $_switchingAgent...'),
+      ],
     );
   }
 }

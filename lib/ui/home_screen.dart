@@ -5,14 +5,19 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import '../models/agent_profile.dart';
+import '../models/auth_models.dart';
 import '../models/conversation.dart';
 import '../pages/conversation_detail_page.dart';
 import '../services/agent_profile_store.dart';
 import '../services/auth_session_manager.dart';
 import '../services/backend_data_api.dart';
 import '../services/conversation_store.dart';
+import '../core/app_config.dart';
 import '../services/store_helpers.dart';
+import 'admin_panel_screen.dart';
 import 'agents_screen.dart';
+import 'loading_overlay.dart';
+import 'settings_panel.dart';
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -28,6 +33,8 @@ class _HomeScreenState extends State<HomeScreen> {
   bool _favoritesOnly = false;
   DateTime? _selectedDate;
   bool _loading = true;
+  bool _settingsPanelOpen = false;
+  String? _loadingAction; // null = no loading, otherwise shows message
   WindowController? _barWindow;
   AgentProfile? _activeAgent;
 
@@ -44,13 +51,12 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadActiveAgent();
     _loadCalendarStatus();
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
-      // ⚠️ IGNORAR TODO lo que NO venga de la barra
-      if (_barWindow == null || fromWindowId != _barWindow!.windowId) {
-        return null;
-      }
-
       switch (call.method) {
         case 'barOpened':
+          // Track the window that just opened (recording or meeting)
+          if (_barWindow == null) {
+            _barWindow = WindowController.fromWindowId(fromWindowId);
+          }
           await windowManager.hide();
           break;
 
@@ -487,39 +493,78 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openRecordingBar() async {
-    final view = WidgetsBinding.instance.platformDispatcher.views.first;
-    final screenWidth = view.physicalSize.width;
-    final screenHeight = view.physicalSize.height;
-    const minWidth = 820.0;
-    const maxWidth = 1180.0;
-    const widthRatio = 0.74;
-    const minHeight = 420.0;
-    const heightRatio = 0.84;
-    final targetWidth = (screenWidth * widthRatio).clamp(minWidth, maxWidth);
-    final targetHeight = (screenHeight * heightRatio).clamp(
-      minHeight,
-      screenHeight - 28.0,
-    );
-    final left = (screenWidth - targetWidth) / 2;
-    final top = (screenHeight - targetHeight) / 2;
+    setState(() => _loadingAction = 'Iniciando modo virtual...');
+    try {
+      final view = WidgetsBinding.instance.platformDispatcher.views.first;
+      final screenWidth = view.physicalSize.width;
+      final screenHeight = view.physicalSize.height;
+      const minWidth = 820.0;
+      const maxWidth = 1180.0;
+      const widthRatio = 0.74;
+      const minHeight = 420.0;
+      const heightRatio = 0.84;
+      final targetWidth = (screenWidth * widthRatio).clamp(minWidth, maxWidth);
+      final targetHeight = (screenHeight * heightRatio).clamp(
+        minHeight,
+        screenHeight - 28.0,
+      );
+      final left = (screenWidth - targetWidth) / 2;
+      final top = (screenHeight - targetHeight) / 2;
 
-    if (_barWindow != null) {
-      _barWindow?.setFrame(Rect.fromLTWH(left, top, targetWidth, targetHeight));
-      await _barWindow?.show();
+      if (_barWindow != null) {
+        _barWindow?.setFrame(Rect.fromLTWH(left, top, targetWidth, targetHeight));
+        await _barWindow?.show();
+        await windowManager.hide();
+        return;
+      }
+      final window = await DesktopMultiWindow.createWindow(jsonEncode({
+        'type': 'bar',
+      }));
+      window
+        ..setFrame(
+          Rect.fromLTWH(left, top, targetWidth, targetHeight),
+        )
+        ..setTitle('EasyExpert')
+        ..show();
+      _barWindow = window;
       await windowManager.hide();
-      return;
+    } finally {
+      if (mounted) setState(() => _loadingAction = null);
     }
-    final window = await DesktopMultiWindow.createWindow(jsonEncode({
-      'type': 'bar',
-    }));
-    window
-      ..setFrame(
-        Rect.fromLTWH(left, top, targetWidth, targetHeight),
-      )
-      ..setTitle('EasyExpert')
-      ..show();
-    _barWindow = window;
-    await windowManager.hide();
+  }
+
+  Future<void> _openMeetingBar() async {
+    setState(() => _loadingAction = 'Iniciando modo reunion...');
+    try {
+      final view = WidgetsBinding.instance.platformDispatcher.views.first;
+      final screenWidth = view.physicalSize.width;
+      final screenHeight = view.physicalSize.height;
+      const minWidth = 820.0;
+      const maxWidth = 1180.0;
+      const widthRatio = 0.74;
+      const minHeight = 420.0;
+      const heightRatio = 0.84;
+      final targetWidth = (screenWidth * widthRatio).clamp(minWidth, maxWidth);
+      final targetHeight = (screenHeight * heightRatio).clamp(
+        minHeight,
+        screenHeight - 28.0,
+      );
+      final left = (screenWidth - targetWidth) / 2;
+      final top = (screenHeight - targetHeight) / 2;
+
+      final window = await DesktopMultiWindow.createWindow(jsonEncode({
+        'type': 'meeting',
+      }));
+      window
+        ..setFrame(
+          Rect.fromLTWH(left, top, targetWidth, targetHeight),
+        )
+        ..setTitle('EasyExpert — Modo Reunión')
+        ..show();
+      await windowManager.hide();
+    } finally {
+      if (mounted) setState(() => _loadingAction = null);
+    }
   }
 
   void _showHelpDialog() {
@@ -685,20 +730,8 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
-  Future<void> _openSettings() async {
-    final activeAgent = await AgentProfileStore.instance.getActiveAgent();
-    final window = await DesktopMultiWindow.createWindow(jsonEncode({
-      'type': 'settings',
-      'mainWindowId': 0,
-      'prompt': activeAgent.prompt,
-      'agentId': activeAgent.id,
-      'agentName': activeAgent.name,
-      'agentMode': activeAgent.mode,
-      'canEditPrompt': activeAgent.canEditPrompt,
-    }));
-    window
-      ..setTitle('Configuracion')
-      ..show();
+  void _toggleSettings() {
+    setState(() => _settingsPanelOpen = !_settingsPanelOpen);
   }
 
   Future<void> _syncBarPromptWithActiveAgent() async {
@@ -720,12 +753,14 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _openAgentsScreen() async {
+    setState(() => _loadingAction = 'Cargando agentes...');
     final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => const AgentsScreen(),
       ),
     );
+    if (mounted) setState(() => _loadingAction = null);
     if (changed == true) {
       await _loadActiveAgent();
       await _syncBarPromptWithActiveAgent();
@@ -734,6 +769,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   Future<void> _logout() async {
     await AuthSessionManager.instance.logout();
+  }
+
+  static const _adminEmails = ['intoyourmomy@gmail.com', 'rodrigo@easycorp.com'];
+  bool _isAdmin(String email) => _adminEmails.contains(email.toLowerCase());
+
+  void _openAdminPanel() {
+    Navigator.of(context).push(
+      MaterialPageRoute(builder: (_) => const AdminPanelScreen()),
+    );
   }
 
   @override
@@ -749,12 +793,15 @@ class _HomeScreenState extends State<HomeScreen> {
     final user = AuthSessionManager.instance.currentUserValue;
     final userName = (user?.name ?? '').trim();
     final userEmail = (user?.email ?? '').trim();
+    final userPlan = user?.plan ?? const UserPlan();
     final userInitialSource = userName.isNotEmpty
         ? userName
         : (userEmail.isNotEmpty ? userEmail : 'A');
     final userInitial = userInitialSource[0].toUpperCase();
 
-    return Scaffold(
+    return Stack(
+      children: [
+        Scaffold(
       body: Container(
         decoration: const BoxDecoration(
           gradient: LinearGradient(
@@ -768,10 +815,35 @@ class _HomeScreenState extends State<HomeScreen> {
           ),
         ),
         child: SafeArea(
-          child: Column(
+          child: Row(
+            children: [
+              // ── Settings panel (left side) ──
+              if (_settingsPanelOpen)
+                Container(
+                  width: 320,
+                  decoration: BoxDecoration(
+                    color: const Color(0xFF141723),
+                    border: Border(
+                      right: BorderSide(
+                        color: Colors.white.withValues(alpha: 0.1),
+                      ),
+                    ),
+                  ),
+                  child: SettingsPanel(
+                    onClose: _toggleSettings,
+                    onPromptSaved: () async {
+                      final active = await AgentProfileStore.instance.getActiveAgent();
+                      setState(() => _activeAgent = active);
+                      _syncBarPromptWithActiveAgent();
+                    },
+                  ),
+                ),
+              // ── Main content ──
+              Expanded(
+                child: Column(
             children: [
               _FramelessTitleBar(
-                title: 'EasyExpert',
+                title: 'EasyExpert $appVersion',
                 onClose: () async {
                   await windowManager.close();
                 },
@@ -791,7 +863,7 @@ class _HomeScreenState extends State<HomeScreen> {
                         _IconPill(
                           icon: Icons.settings_rounded,
                           tooltip: 'Configuracion',
-                          onTap: _openSettings,
+                          onTap: _toggleSettings,
                         ),
                       ],
                     ),
@@ -891,6 +963,8 @@ class _HomeScreenState extends State<HomeScreen> {
                       onSelected: (value) async {
                         if (value == 'logout') {
                           await _logout();
+                        } else if (value == 'admin') {
+                          _openAdminPanel();
                         }
                       },
                       itemBuilder: (context) => [
@@ -914,10 +988,23 @@ class _HomeScreenState extends State<HomeScreen> {
                                     fontSize: 12,
                                   ),
                                 ),
+                              const SizedBox(height: 4),
+                              _PlanBadge(plan: userPlan),
                             ],
                           ),
                         ),
                         const PopupMenuDivider(),
+                        if (_isAdmin(userEmail))
+                          const PopupMenuItem<String>(
+                            value: 'admin',
+                            child: Row(
+                              children: [
+                                Icon(Icons.admin_panel_settings, size: 18),
+                                SizedBox(width: 8),
+                                Text('Panel Admin'),
+                              ],
+                            ),
+                          ),
                         const PopupMenuItem<String>(
                           value: 'logout',
                           child: Text('Cerrar sesion'),
@@ -957,18 +1044,60 @@ class _HomeScreenState extends State<HomeScreen> {
                             onTap: _openAgentsScreen,
                           ),
                           const Spacer(),
-                          ElevatedButton.icon(
-                            onPressed: _openRecordingBar,
-                            icon:
-                                const Icon(Icons.play_arrow_rounded, size: 18),
-                            label: const Text('Start EasyExpert'),
-                            style: ElevatedButton.styleFrom(
-                              backgroundColor: const Color(0xFF5CB2FF),
-                              foregroundColor: const Color(0xFF0B0C10),
+                          PopupMenuButton<String>(
+                            onSelected: (value) {
+                              if (value == 'virtual') {
+                                _openRecordingBar();
+                              } else if (value == 'meeting') {
+                                _openMeetingBar();
+                              }
+                            },
+                            itemBuilder: (context) => [
+                              const PopupMenuItem(
+                                value: 'virtual',
+                                child: ListTile(
+                                  leading: Icon(Icons.headset_rounded, size: 20),
+                                  title: Text('Modo Virtual'),
+                                  subtitle: Text('Audio del sistema + micrófono',
+                                      style: TextStyle(fontSize: 11)),
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                              const PopupMenuItem(
+                                value: 'meeting',
+                                child: ListTile(
+                                  leading: Icon(Icons.groups_rounded, size: 20),
+                                  title: Text('Modo Reunión'),
+                                  subtitle: Text('Solo micrófono — reuniones presenciales',
+                                      style: TextStyle(fontSize: 11)),
+                                  dense: true,
+                                  contentPadding: EdgeInsets.zero,
+                                ),
+                              ),
+                            ],
+                            child: Container(
                               padding: const EdgeInsets.symmetric(
                                   horizontal: 18, vertical: 12),
-                              shape: RoundedRectangleBorder(
+                              decoration: BoxDecoration(
+                                color: const Color(0xFF5CB2FF),
                                 borderRadius: BorderRadius.circular(18),
+                              ),
+                              child: const Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(Icons.play_arrow_rounded,
+                                      size: 18, color: Color(0xFF0B0C10)),
+                                  SizedBox(width: 6),
+                                  Text('Start EasyExpert',
+                                      style: TextStyle(
+                                        color: Color(0xFF0B0C10),
+                                        fontWeight: FontWeight.w600,
+                                      )),
+                                  SizedBox(width: 4),
+                                  Icon(Icons.arrow_drop_down,
+                                      size: 18, color: Color(0xFF0B0C10)),
+                                ],
                               ),
                             ),
                           ),
@@ -1057,10 +1186,16 @@ class _HomeScreenState extends State<HomeScreen> {
                 ),
               ),
             ],
-          ),
+          ), // end Column
+              ), // end Expanded (main content)
+            ],
+          ), // end Row (settings + main)
         ),
       ),
-      floatingActionButton: null,
+    ), // end Scaffold
+        if (_loadingAction != null)
+          LoadingOverlay(message: _loadingAction!),
+      ],
     );
   }
 
@@ -1342,42 +1477,52 @@ class _CalendarCard extends StatelessWidget {
             const Text('No hay eventos para hoy',
                 style: TextStyle(color: Colors.white54, fontSize: 13))
           else
-            ...events.take(3).map((event) {
-              final title = event['title'] as String? ?? '(Sin titulo)';
-              final startStr = event['startDateTime'] as String?;
-              return Padding(
-                padding: const EdgeInsets.only(bottom: 6),
-                child: Row(
-                  children: [
-                    Container(
-                      width: 3,
-                      height: 24,
-                      decoration: BoxDecoration(
-                        color: calendarGreen,
-                        borderRadius: BorderRadius.circular(2),
-                      ),
-                    ),
-                    const SizedBox(width: 8),
-                    if (startStr != null) ...[
-                      Text(
-                        _formatTime(startStr),
-                        style: const TextStyle(
-                            color: Colors.white54, fontSize: 12),
-                      ),
-                      const SizedBox(width: 8),
-                    ],
-                    Expanded(
-                      child: Text(
-                        title,
-                        style: const TextStyle(
-                            color: Colors.white, fontSize: 13),
-                        overflow: TextOverflow.ellipsis,
-                      ),
-                    ),
-                  ],
+            ConstrainedBox(
+              constraints: const BoxConstraints(maxHeight: 100),
+              child: Scrollbar(
+                thumbVisibility: events.length > 3,
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: events.map((event) {
+                      final title = event['title'] as String? ?? '(Sin titulo)';
+                      final startStr = event['startDateTime'] as String?;
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Row(
+                          children: [
+                            Container(
+                              width: 3,
+                              height: 24,
+                              decoration: BoxDecoration(
+                                color: calendarGreen,
+                                borderRadius: BorderRadius.circular(2),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            if (startStr != null) ...[
+                              Text(
+                                _formatTime(startStr),
+                                style: const TextStyle(
+                                    color: Colors.white54, fontSize: 12),
+                              ),
+                              const SizedBox(width: 8),
+                            ],
+                            Expanded(
+                              child: Text(
+                                title,
+                                style: const TextStyle(
+                                    color: Colors.white, fontSize: 13),
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ],
+                        ),
+                      );
+                    }).toList(),
+                  ),
                 ),
-              );
-            }),
+              ),
+            ),
           if (events.length > 3)
             Text(
               '+${events.length - 3} más',
@@ -1670,6 +1815,60 @@ class _TitleButton extends StatelessWidget {
         onPressed: onPressed,
         tooltip: tooltip,
         icon: Icon(icon, color: Colors.white70),
+      ),
+    );
+  }
+}
+
+class _PlanBadge extends StatelessWidget {
+  const _PlanBadge({required this.plan});
+  final UserPlan plan;
+
+  Color get _color {
+    switch (plan.tier) {
+      case 'starter':
+        return Colors.blue;
+      case 'professional':
+        return Colors.cyan;
+      case 'business':
+        return Colors.amber;
+      case 'enterprise':
+        return Colors.purple;
+      default:
+        return Colors.grey;
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
+      decoration: BoxDecoration(
+        color: _color.withValues(alpha: 0.2),
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Text(
+            plan.tierLabel,
+            style: TextStyle(
+              fontSize: 11,
+              fontWeight: FontWeight.w600,
+              color: _color,
+            ),
+          ),
+          if (plan.isExpired)
+            const Padding(
+              padding: EdgeInsets.only(left: 4),
+              child: Icon(Icons.warning, size: 12, color: Colors.red),
+            ),
+          if (plan.isExpiringSoon && !plan.isExpired)
+            const Padding(
+              padding: EdgeInsets.only(left: 4),
+              child: Icon(Icons.schedule, size: 12, color: Colors.orange),
+            ),
+        ],
       ),
     );
   }

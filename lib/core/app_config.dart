@@ -5,6 +5,8 @@ import 'package:path/path.dart' as p;
 
 import '../services/audio_preferences_store.dart';
 
+const String appVersion = '1.4.8';
+const String githubRepo = 'RodrigoCamCe1/easy-sales-page';
 const double barHeight = 280.0;
 const String dartDefineOpenAIKey = String.fromEnvironment('OPENAI_API_KEY');
 const String defaultOpenAIRealtimeModel = 'gpt-4o-realtime-preview';
@@ -49,4 +51,4 @@ int get realtimeFlushSeconds =>
     _readIntEnv('OPENAI_REALTIME_FLUSH_SECONDS', defaultRealtimeFlushSeconds);
 
 String get backendApiBaseUrl =>
-    (dotenv.env['BACKEND_API_URL'] ?? 'http://localhost:4000').trim();
+    (dotenv.env['BACKEND_API_URL'] ?? 'https://api.easyexpert.top').trim();

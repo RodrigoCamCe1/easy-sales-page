@@ -13,6 +13,7 @@ import '../services/window_capture_utils.dart' as capture;
 import '../models/session_models.dart';
 import '../services/agent_profile_store.dart';
 import '../services/recording_session_controller.dart';
+import 'settings_panel.dart';
 
 class RecordingBarApp extends StatelessWidget {
   const RecordingBarApp({super.key});
@@ -55,6 +56,7 @@ class _RecordingBarState extends State<RecordingBar> {
   bool _showDebugLogs = false;
   bool _suggestionsSidebarOpen = true;
   bool _invisibleMode = false;
+  bool _settingsPanelOpen = false;
 
   // ── Scroll / input controllers ─────────────────────────────────────────────
   final ScrollController _chatScrollController = ScrollController();
@@ -225,27 +227,8 @@ class _RecordingBarState extends State<RecordingBar> {
     await _controller.sendManualPrompt(prompt);
   }
 
-  Future<void> _openSettings() async {
-    final active = await AgentProfileStore.instance.getActiveAgent();
-    final view = WidgetsBinding.instance.platformDispatcher.views.first;
-    final screenWidth = view.physicalSize.width / view.devicePixelRatio;
-    final screenHeight = view.physicalSize.height / view.devicePixelRatio;
-    const topOffset = 28.0;
-    final window = await DesktopMultiWindow.createWindow(jsonEncode({
-      'type': 'settings',
-      'mainWindowId': 0,
-      'prompt': active.prompt,
-      'agentId': active.id,
-      'agentName': active.name,
-      'agentMode': active.mode,
-      'canEditPrompt': active.canEditPrompt,
-    }));
-    window
-      ..setFrame(
-        Rect.fromLTWH(0, topOffset, screenWidth, screenHeight - topOffset),
-      )
-      ..setTitle('Configuracion')
-      ..show();
+  void _toggleSettings() {
+    setState(() => _settingsPanelOpen = !_settingsPanelOpen);
   }
 
   void _showStereoMixGuide() {
@@ -314,7 +297,29 @@ class _RecordingBarState extends State<RecordingBar> {
           behavior: HitTestBehavior.translucent,
           child: Padding(
             padding: const EdgeInsets.all(12),
-            child: Container(
+            child: Row(
+              children: [
+                // ── Settings panel (left side) ──
+                if (_settingsPanelOpen)
+                  Container(
+                    width: 320,
+                    margin: const EdgeInsets.only(right: 10),
+                    decoration: BoxDecoration(
+                      color: colorScheme.surface,
+                      borderRadius: const BorderRadius.all(Radius.circular(18)),
+                      border: Border.all(
+                        color: colorScheme.outlineVariant.withOpacity(0.68),
+                      ),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: SettingsPanel(
+                      onClose: _toggleSettings,
+                      onPromptSaved: _loadActiveAgent,
+                    ),
+                  ),
+                // ── Main bar ──
+                Expanded(
+                  child: Container(
               width: double.infinity,
               constraints: const BoxConstraints(minHeight: barHeight),
               decoration: BoxDecoration(
@@ -372,7 +377,7 @@ class _RecordingBarState extends State<RecordingBar> {
                                 navIconButton(
                                   Icons.settings_rounded,
                                   'Configurar',
-                                  _openSettings,
+                                  _toggleSettings,
                                 ),
                               ],
                             ),
@@ -385,7 +390,7 @@ class _RecordingBarState extends State<RecordingBar> {
                                   padding:
                                       const EdgeInsets.symmetric(horizontal: 8),
                                   child: Text(
-                                    'EasyExpert',
+                                    'EasyExpert $appVersion',
                                     style: textTheme.labelSmall?.copyWith(
                                       color: colorScheme.onSurfaceVariant,
                                       fontWeight: FontWeight.w600,
@@ -615,6 +620,9 @@ class _RecordingBarState extends State<RecordingBar> {
                 ),
               ),
             ),
+                ), // end Expanded (main bar)
+              ],
+            ), // end Row (settings + main bar)
           ),
         ),
       ),

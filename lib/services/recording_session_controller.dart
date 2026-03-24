@@ -11,6 +11,7 @@ import '../core/app_config.dart';
 import '../models/conversation.dart';
 import '../models/session_models.dart';
 import 'audio_device_utils.dart';
+import 'audio_preferences_store.dart';
 import 'auth_session_manager.dart';
 import 'backend_data_api.dart';
 import 'conversation_store.dart';
@@ -959,21 +960,28 @@ class RecordingSessionController extends ChangeNotifier {
   Future<void> _startWindowsCapture() async {
     await _stopWindowsCapture();
 
-    // Auto-detect loopback device (Stereo Mix / Mezcla estéreo) via dshow.
+    final store = AudioPreferencesStore.instance;
+    final manualSystemId = store.systemDeviceId;
+    final hasManualSystem = manualSystemId.isNotEmpty &&
+        manualSystemId != 'auto' &&
+        manualSystemId != 'Stereo Mix (Realtek(R) Audio)'; // ignore old default
+
+    // Enumerate devices for logging and auto-detection
     final devices = await enumerateAudioDevices();
     _addLog('🎧 Buscando dispositivos de audio...');
     _addLog('🎧 Se encontraron ${devices.length} dispositivo(s):');
     for (final d in devices) {
       _addLog('   🔹 ${d.name}');
     }
-    final loopback = findLoopbackDevice(devices);
 
     bool systemAudioActive = false;
-    if (loopback != null) {
-      _addLog('✅ Audio del sistema detectado: ${loopback.name}');
+
+    if (hasManualSystem) {
+      // ── Manual selection ──
+      _addLog('🎧 Usando dispositivo manual: ${store.systemDevice}');
       await _startWindowsDeviceCapture(
         label: 'system',
-        device: loopback.deviceId,
+        device: manualSystemId,
         onChunk: (bytes) {
           _pendingSystemBytes += bytes.length;
           _openAIClientSystem?.appendAudio(bytes);
@@ -982,10 +990,10 @@ class RecordingSessionController extends ChangeNotifier {
       );
       systemAudioActive = _audioProcessSystem != null;
       if (!systemAudioActive) {
-        _addLog('⚠️ No se pudo capturar con ID del dispositivo, reintentando con nombre...');
+        _addLog('⚠️ Fallo con ID, reintentando con nombre...');
         await _startWindowsDeviceCapture(
           label: 'system',
-          device: loopback.name,
+          device: store.systemDevice,
           onChunk: (bytes) {
             _pendingSystemBytes += bytes.length;
             _openAIClientSystem?.appendAudio(bytes);
@@ -995,7 +1003,36 @@ class RecordingSessionController extends ChangeNotifier {
         systemAudioActive = _audioProcessSystem != null;
       }
     } else {
-      _addLog('❌ No se encontró Stereo Mix entre los dispositivos. La IA no podrá escuchar el audio del sistema.');
+      // ── Auto-detect loopback (Stereo Mix / Mezcla estéreo) ──
+      final loopback = findLoopbackDevice(devices);
+      if (loopback != null) {
+        _addLog('✅ Audio del sistema detectado: ${loopback.name}');
+        await _startWindowsDeviceCapture(
+          label: 'system',
+          device: loopback.deviceId,
+          onChunk: (bytes) {
+            _pendingSystemBytes += bytes.length;
+            _openAIClientSystem?.appendAudio(bytes);
+            _logAudioLevel(bytes, label: 'system');
+          },
+        );
+        systemAudioActive = _audioProcessSystem != null;
+        if (!systemAudioActive) {
+          _addLog('⚠️ No se pudo capturar con ID del dispositivo, reintentando con nombre...');
+          await _startWindowsDeviceCapture(
+            label: 'system',
+            device: loopback.name,
+            onChunk: (bytes) {
+              _pendingSystemBytes += bytes.length;
+              _openAIClientSystem?.appendAudio(bytes);
+              _logAudioLevel(bytes, label: 'system');
+            },
+          );
+          systemAudioActive = _audioProcessSystem != null;
+        }
+      } else {
+        _addLog('❌ No se encontró Stereo Mix entre los dispositivos. La IA no podrá escuchar el audio del sistema.');
+      }
     }
 
     if (!systemAudioActive) {
