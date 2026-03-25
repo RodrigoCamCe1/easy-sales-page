@@ -56,7 +56,29 @@ const migrationStatements = [
       created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
     );`,
   `CREATE INDEX IF NOT EXISTS idx_user_documents_user_agent
-     ON user_documents(user_id, agent_id);`
+     ON user_documents(user_id, agent_id);`,
+  `CREATE TABLE IF NOT EXISTS user_google_tokens (
+      user_id UUID PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+      access_token TEXT NOT NULL,
+      refresh_token TEXT,
+      token_expires_at TIMESTAMPTZ NOT NULL,
+      scopes TEXT NOT NULL DEFAULT '',
+      created_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+      updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
+    );`,
+
+  // ── Subscription / plan fields on users ──
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_tier TEXT NOT NULL DEFAULT 'free';`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_expires_at TIMESTAMPTZ;`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_activated_at TIMESTAMPTZ;`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS plan_activated_by TEXT;`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_query_limit INT NOT NULL DEFAULT 10;`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_query_used INT NOT NULL DEFAULT 0;`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS monthly_query_reset_at TIMESTAMPTZ;`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS voice_minutes_limit INT NOT NULL DEFAULT 0;`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS voice_minutes_used INT NOT NULL DEFAULT 0;`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS max_agents INT NOT NULL DEFAULT 1;`,
+  `ALTER TABLE users ADD COLUMN IF NOT EXISTS max_documents INT NOT NULL DEFAULT 5;`,
 ] as const;
 
 export async function runMigrations(pool: Pool): Promise<void> {

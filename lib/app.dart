@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'core/app_config.dart';
+import 'services/app_update_service.dart';
 import 'services/auth_session_manager.dart';
 import 'ui/auth_screen.dart';
 import 'ui/home_screen.dart';
@@ -67,6 +69,57 @@ class _AppBootstrapState extends State<_AppBootstrap> {
     await windowManager.center();
   }
 
+  Future<void> _checkForUpdate() async {
+    debugPrint('[UPDATE] Checking for updates...');
+    final update = await AppUpdateService.instance.checkForUpdate();
+    debugPrint('[UPDATE] Result: ${update == null ? "no update" : "v${update.latestVersion} available"}');
+    if (update == null || !mounted) return;
+
+    final shouldUpdate = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Nueva versión disponible'),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Versión actual: v${appVersion}'),
+            Text('Nueva versión: v${update.latestVersion}'),
+            if (update.releaseNotes.isNotEmpty) ...[
+              const SizedBox(height: 12),
+              const Text('Novedades:', style: TextStyle(fontWeight: FontWeight.bold)),
+              const SizedBox(height: 4),
+              ConstrainedBox(
+                constraints: const BoxConstraints(maxHeight: 200),
+                child: SingleChildScrollView(
+                  child: Text(
+                    update.releaseNotes,
+                    style: TextStyle(fontSize: 13, color: Colors.white.withValues(alpha: 0.7)),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Más tarde'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Actualizar ahora'),
+          ),
+        ],
+      ),
+    );
+
+    if (shouldUpdate == true) {
+      await AppUpdateService.instance.downloadAndInstall(update.downloadUrl);
+    }
+  }
+
   Future<void> _setMainWindowSize() async {
     if (!Platform.isWindows) return;
     final flutterView =
@@ -97,6 +150,7 @@ class _AppBootstrapState extends State<_AppBootstrap> {
               WidgetsBinding.instance.addPostFrameCallback((_) {
                 if (loggedIn) {
                   _setMainWindowSize();
+                  _checkForUpdate();
                 } else {
                   _setLoginWindowSize();
                 }

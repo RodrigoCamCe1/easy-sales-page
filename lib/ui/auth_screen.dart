@@ -2,10 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:window_manager/window_manager.dart';
 
+import '../core/app_config.dart';
 import '../services/auth_api.dart';
 import '../services/auth_session_manager.dart';
-
-const String _appVersion = '1.3.9';
 
 enum _AuthMode {
   login,
@@ -552,7 +551,7 @@ class _AuthScreenState extends State<AuthScreen> {
                         ),
                         const SizedBox(height: 16),
                         Text(
-                          'v$_appVersion',
+                          'v$appVersion',
                           style: TextStyle(
                             color: Colors.white.withValues(alpha: 0.3),
                             fontSize: 12,

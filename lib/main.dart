@@ -8,6 +8,7 @@ import 'app.dart';
 import 'core/app_config.dart';
 import 'services/audio_preferences_store.dart';
 import 'services/auth_session_manager.dart';
+import 'ui/meeting_bar.dart';
 import 'ui/recording_bar.dart';
 import 'ui/settings_window.dart';
 
@@ -122,6 +123,13 @@ Future<void> main(List<String> args) async {
         agentMode: arguments['agentMode'] as String? ?? 'custom',
         canEditPrompt: arguments['canEditPrompt'] as bool? ?? true,
       ));
+      return;
+    }
+
+    // ✅ Meeting mode
+    if (type == 'meeting') {
+      await AuthSessionManager.instance.bootstrap();
+      runApp(const MeetingBarApp());
       return;
     }
 

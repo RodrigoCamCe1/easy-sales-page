@@ -11,6 +11,7 @@ import {
   extractRequestMeta,
   issueSession,
 } from "../utils/auth-helpers";
+import { buildPlanResponse } from "../utils/plan-limits";
 
 const registerSchema = z.object({
   email: z.email().transform((value) => value.toLowerCase().trim()),
@@ -306,8 +307,12 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.get("/me", { preHandler: [fastify.authenticate] }, async (request) => {
     const payload = request.user as { sub: string; email: string };
-    const found = await db.query<UserRow>(
-      "SELECT id, email, name, password_hash, email_verified_at FROM users WHERE id = $1 LIMIT 1",
+    const found = await db.query(
+      `SELECT id, email, name, password_hash, email_verified_at,
+        plan_tier, plan_expires_at, plan_activated_at,
+        monthly_query_limit, monthly_query_used, monthly_query_reset_at,
+        voice_minutes_limit, voice_minutes_used, max_agents, max_documents
+      FROM users WHERE id = $1 LIMIT 1`,
       [payload.sub]
     );
 
@@ -315,6 +320,22 @@ export const authRoutes: FastifyPluginAsync = async (fastify) => {
       return { user: null };
     }
 
-    return { user: buildSafeUser(found.rows[0]) };
+    const row = found.rows[0] as UserRow & {
+      plan_tier: string;
+      plan_expires_at: Date | null;
+      plan_activated_at: Date | null;
+      monthly_query_limit: number;
+      monthly_query_used: number;
+      monthly_query_reset_at: Date | null;
+      voice_minutes_limit: number;
+      voice_minutes_used: number;
+      max_agents: number;
+      max_documents: number;
+    };
+
+    return {
+      user: buildSafeUser(row),
+      plan: buildPlanResponse(row),
+    };
   });
 };

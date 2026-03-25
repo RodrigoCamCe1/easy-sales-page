@@ -161,7 +161,13 @@ class AuthApi {
     );
     final rawUser = response['user'];
     if (rawUser is! Map) return null;
-    return AuthUser.fromJson(Map<String, dynamic>.from(rawUser));
+    final userMap = Map<String, dynamic>.from(rawUser);
+    // Merge plan from top-level response into user map for AuthUser.fromJson
+    final rawPlan = response['plan'];
+    if (rawPlan is Map) {
+      userMap['plan'] = Map<String, dynamic>.from(rawPlan);
+    }
+    return AuthUser.fromJson(userMap);
   }
 
   Future<Map<String, dynamic>> _sendJson({

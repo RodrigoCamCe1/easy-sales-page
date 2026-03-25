@@ -14,6 +14,7 @@ import {
   embedQuery,
   detectFileType,
 } from "../services/document-processor";
+import { checkDocumentLimit } from "../middleware/plan-guard";
 
 const MAX_FILE_SIZE = 10 * 1024 * 1024; // 10 MB
 
@@ -37,7 +38,7 @@ export const documentRoutes: FastifyPluginAsync = async (fastify) => {
 
   fastify.post(
     "/upload",
-    { preHandler: [fastify.authenticate] },
+    { preHandler: [fastify.authenticate, checkDocumentLimit] },
     async (request, reply) => {
       const userId = getUserId(request);
 

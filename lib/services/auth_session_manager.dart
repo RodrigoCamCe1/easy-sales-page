@@ -290,6 +290,15 @@ class AuthSessionManager {
       user: bundle.user,
     );
     _scheduleAutoRefresh();
+
+    // Fetch full user profile (including plan) from /me
+    try {
+      final me = await _api.me(accessToken: bundle.accessToken);
+      if (me != null) {
+        currentUser.value = me;
+        await _persistCurrentSnapshot();
+      }
+    } catch (_) {}
   }
 
   Future<void> _persistCurrentSnapshot() async {

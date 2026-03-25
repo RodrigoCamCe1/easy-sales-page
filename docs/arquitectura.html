@@ -1,0 +1,533 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>EasyExpert - Arquitectura del Sistema</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+    background: #0f172a;
+    color: #e2e8f0;
+    min-height: 100vh;
+    padding: 40px 20px;
+  }
+  h1 {
+    text-align: center;
+    font-size: 2rem;
+    margin-bottom: 8px;
+    background: linear-gradient(135deg, #60a5fa, #a78bfa);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+  .subtitle {
+    text-align: center;
+    color: #94a3b8;
+    margin-bottom: 40px;
+    font-size: 0.95rem;
+  }
+
+  /* Layout principal */
+  .arch-container {
+    max-width: 1200px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 32px;
+  }
+
+  /* Filas */
+  .row {
+    display: flex;
+    gap: 24px;
+    justify-content: center;
+    flex-wrap: wrap;
+  }
+
+  /* Bloques */
+  .block {
+    border-radius: 16px;
+    padding: 24px;
+    position: relative;
+    transition: transform 0.2s, box-shadow 0.2s;
+    min-width: 220px;
+  }
+  .block:hover {
+    transform: translateY(-4px);
+    box-shadow: 0 12px 40px rgba(0,0,0,0.4);
+  }
+  .block h3 {
+    font-size: 1rem;
+    margin-bottom: 12px;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .block ul {
+    list-style: none;
+    font-size: 0.82rem;
+    color: #cbd5e1;
+    line-height: 1.7;
+  }
+  .block ul li::before {
+    content: "›";
+    margin-right: 6px;
+    color: #64748b;
+    font-weight: bold;
+  }
+
+  .badge {
+    display: inline-block;
+    padding: 2px 8px;
+    border-radius: 6px;
+    font-size: 0.7rem;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  /* Colores por tipo */
+  .client { background: linear-gradient(135deg, #1e3a5f, #1e293b); border: 1px solid #2563eb; }
+  .client h3 { color: #60a5fa; }
+  .client .badge { background: #1d4ed8; color: #bfdbfe; }
+
+  .backend { background: linear-gradient(135deg, #1a3330, #1e293b); border: 1px solid #059669; }
+  .backend h3 { color: #34d399; }
+  .backend .badge { background: #047857; color: #a7f3d0; }
+
+  .database { background: linear-gradient(135deg, #2d1f3d, #1e293b); border: 1px solid #7c3aed; }
+  .database h3 { color: #a78bfa; }
+  .database .badge { background: #6d28d9; color: #ddd6fe; }
+
+  .external { background: linear-gradient(135deg, #3b1f1f, #1e293b); border: 1px solid #dc2626; }
+  .external h3 { color: #f87171; }
+  .external .badge { background: #b91c1c; color: #fecaca; }
+
+  .landing { background: linear-gradient(135deg, #1f2d1a, #1e293b); border: 1px solid #84cc16; }
+  .landing h3 { color: #a3e635; }
+  .landing .badge { background: #4d7c0f; color: #d9f99d; }
+
+  /* Conectores */
+  .connector {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    gap: 12px;
+    color: #475569;
+    font-size: 0.78rem;
+    padding: 4px 0;
+  }
+  .connector .line {
+    height: 2px;
+    width: 60px;
+    background: linear-gradient(90deg, transparent, #475569, transparent);
+  }
+  .connector .arrow-down {
+    width: 2px;
+    height: 28px;
+    background: linear-gradient(180deg, #475569, transparent);
+    position: relative;
+  }
+  .connector-vertical {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: 0;
+  }
+  .connector-vertical .label {
+    font-size: 0.72rem;
+    color: #64748b;
+    background: #1e293b;
+    padding: 2px 10px;
+    border-radius: 8px;
+    border: 1px solid #334155;
+  }
+  .arrow-v {
+    width: 0; height: 0;
+    border-left: 6px solid transparent;
+    border-right: 6px solid transparent;
+    border-top: 8px solid #475569;
+  }
+  .pipe {
+    width: 2px;
+    height: 16px;
+    background: #475569;
+  }
+
+  /* Sección fullwidth */
+  .full { flex: 1; min-width: 100%; }
+  .half { flex: 1; min-width: 300px; max-width: 580px; }
+  .third { flex: 1; min-width: 240px; max-width: 380px; }
+
+  /* Tabla de endpoints */
+  .endpoints-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 0.78rem;
+    margin-top: 12px;
+  }
+  .endpoints-table th {
+    text-align: left;
+    padding: 6px 10px;
+    background: rgba(255,255,255,0.05);
+    border-bottom: 1px solid #334155;
+    color: #94a3b8;
+    font-weight: 600;
+  }
+  .endpoints-table td {
+    padding: 5px 10px;
+    border-bottom: 1px solid #1e293b;
+    color: #cbd5e1;
+  }
+  .method {
+    display: inline-block;
+    padding: 1px 6px;
+    border-radius: 4px;
+    font-size: 0.68rem;
+    font-weight: 700;
+    min-width: 38px;
+    text-align: center;
+  }
+  .method.get { background: #1d4ed8; color: #bfdbfe; }
+  .method.post { background: #047857; color: #a7f3d0; }
+  .method.put { background: #b45309; color: #fde68a; }
+  .method.delete { background: #b91c1c; color: #fecaca; }
+  .auth-badge {
+    font-size: 0.65rem;
+    padding: 1px 5px;
+    border-radius: 3px;
+    background: #7c3aed22;
+    color: #a78bfa;
+    border: 1px solid #7c3aed44;
+  }
+
+  /* Flow diagram */
+  .flow-box {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    flex-wrap: wrap;
+    justify-content: center;
+    margin-top: 12px;
+  }
+  .flow-step {
+    background: rgba(255,255,255,0.06);
+    border: 1px solid #334155;
+    border-radius: 10px;
+    padding: 8px 14px;
+    font-size: 0.78rem;
+    text-align: center;
+    min-width: 100px;
+  }
+  .flow-arrow {
+    color: #475569;
+    font-size: 1.2rem;
+  }
+
+  /* Section title */
+  .section-title {
+    font-size: 0.75rem;
+    text-transform: uppercase;
+    letter-spacing: 2px;
+    color: #475569;
+    text-align: center;
+    padding: 8px 0;
+    border-top: 1px solid #1e293b;
+    margin-top: 8px;
+  }
+
+  /* Env vars */
+  .env-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+    gap: 6px;
+    margin-top: 10px;
+  }
+  .env-item {
+    font-size: 0.72rem;
+    padding: 4px 8px;
+    background: rgba(255,255,255,0.04);
+    border-radius: 6px;
+    border: 1px solid #1e293b;
+    font-family: 'Cascadia Code', 'Fira Code', monospace;
+    color: #94a3b8;
+  }
+</style>
+</head>
+<body>
+
+<h1>EasyExpert / EasySales IA</h1>
+<p class="subtitle">Arquitectura del Sistema &mdash; Asistente IA de audio en tiempo real con RAG</p>
+
+<div class="arch-container">
+
+  <!-- ═══ CAPA CLIENTE ═══ -->
+  <div class="section-title">Capa Cliente</div>
+  <div class="row">
+
+    <div class="block client half">
+      <h3>&#128187; App Desktop (Flutter) <span class="badge">Windows</span></h3>
+      <ul>
+        <li><strong>Multi-ventana</strong>: Main Window + Recording Bar (flotante) + Settings</li>
+        <li><strong>Audio dual</strong>: Micrófono (flutter_audio_capture) + Sistema (FFmpeg/Stereo Mix)</li>
+        <li><strong>OpenAI Realtime</strong>: 2 conexiones WebSocket simultáneas (mic + system)</li>
+        <li><strong>Auth</strong>: JWT + refresh token auto-renovable (flutter_secure_storage)</li>
+        <li><strong>State</strong>: ValueNotifier reactivo (AuthSessionManager, ConversationStore, AgentProfileStore)</li>
+        <li><strong>Offline</strong>: Conversaciones cacheadas localmente, sync al reconectar</li>
+        <li><strong>Agentes</strong>: Perfiles personalizables (prompt, estilo, mentalidad, documentos RAG)</li>
+      </ul>
+    </div>
+
+    <div class="block landing third">
+      <h3>&#127760; Landing Page <span class="badge">HTML estático</span></h3>
+      <ul>
+        <li>Dominio: easyexpert1 (InMotion VPS)</li>
+        <li>HTML + CSS + JS (sin framework)</li>
+        <li>Secciones: Hero, Features, Galería, Descarga</li>
+        <li>Deploy: SCP directo al servidor</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- Conector -->
+  <div class="connector-vertical">
+    <div class="pipe"></div>
+    <div class="label">HTTPS / REST + WebSocket (wss://)</div>
+    <div class="pipe"></div>
+    <div class="arrow-v"></div>
+  </div>
+
+  <!-- ═══ CAPA BACKEND ═══ -->
+  <div class="section-title">Capa Backend (Render &rarr; migrando a VPS)</div>
+  <div class="row">
+
+    <div class="block backend full">
+      <h3>&#9881;&#65039; API Backend <span class="badge">Fastify 5 + TypeScript</span> <span class="badge">Node.js 20</span> <span class="badge">Puerto 4000</span></h3>
+
+      <table class="endpoints-table">
+        <thead>
+          <tr><th>Endpoint</th><th>Método</th><th>Auth</th><th>Descripción</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>/api/health</td><td><span class="method get">GET</span></td><td></td><td>Health check</td></tr>
+          <tr><td colspan="4" style="color:#475569; font-size:0.7rem; padding-top:8px;">Autenticación</td></tr>
+          <tr><td>/api/auth/register</td><td><span class="method post">POST</span></td><td></td><td>Registro email + password</td></tr>
+          <tr><td>/api/auth/login</td><td><span class="method post">POST</span></td><td></td><td>Login email + password</td></tr>
+          <tr><td>/api/auth/refresh</td><td><span class="method post">POST</span></td><td></td><td>Renovar access token</td></tr>
+          <tr><td>/api/auth/logout</td><td><span class="method post">POST</span></td><td></td><td>Revocar refresh token</td></tr>
+          <tr><td>/api/auth/magic-link/request</td><td><span class="method post">POST</span></td><td></td><td>Enviar magic link por email</td></tr>
+          <tr><td>/api/auth/magic-link/verify</td><td><span class="method post">POST</span></td><td></td><td>Verificar magic link</td></tr>
+          <tr><td>/api/auth/me</td><td><span class="method get">GET</span></td><td><span class="auth-badge">JWT</span></td><td>Usuario actual</td></tr>
+          <tr><td>/api/auth/google/init</td><td><span class="method post">POST</span></td><td></td><td>URL de consentimiento Google</td></tr>
+          <tr><td>/api/auth/google/callback</td><td><span class="method get">GET</span></td><td></td><td>Callback OAuth Google</td></tr>
+          <tr><td>/api/auth/google/poll</td><td><span class="method get">GET</span></td><td></td><td>Poll estado de auth Google</td></tr>
+          <tr><td colspan="4" style="color:#475569; font-size:0.7rem; padding-top:8px;">Datos de usuario</td></tr>
+          <tr><td>/api/data/agents-config</td><td><span class="method get">GET</span> <span class="method put">PUT</span></td><td><span class="auth-badge">JWT</span></td><td>Perfiles de agentes IA</td></tr>
+          <tr><td>/api/data/conversations</td><td><span class="method get">GET</span> <span class="method put">PUT</span></td><td><span class="auth-badge">JWT</span></td><td>Historial conversaciones</td></tr>
+          <tr><td>/api/data/conversations/add</td><td><span class="method post">POST</span></td><td><span class="auth-badge">JWT</span></td><td>Agregar conversación</td></tr>
+          <tr><td colspan="4" style="color:#475569; font-size:0.7rem; padding-top:8px;">Documentos RAG</td></tr>
+          <tr><td>/api/data/documents/upload</td><td><span class="method post">POST</span></td><td><span class="auth-badge">JWT</span></td><td>Subir PDF/DOCX/TXT → chunk → embed</td></tr>
+          <tr><td>/api/data/documents</td><td><span class="method get">GET</span></td><td><span class="auth-badge">JWT</span></td><td>Listar documentos del agente</td></tr>
+          <tr><td>/api/data/documents/:fileId</td><td><span class="method delete">DEL</span></td><td><span class="auth-badge">JWT</span></td><td>Eliminar documento + embeddings</td></tr>
+          <tr><td>/api/data/documents/search</td><td><span class="method post">POST</span></td><td><span class="auth-badge">JWT</span></td><td>Buscar chunks relevantes (RAG)</td></tr>
+          <tr><td colspan="4" style="color:#475569; font-size:0.7rem; padding-top:8px;">Realtime</td></tr>
+          <tr><td>/api/realtime/session</td><td><span class="method post">POST</span></td><td><span class="auth-badge">JWT</span></td><td>Token efímero OpenAI Realtime (1h)</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+  </div>
+
+  <!-- Conector -->
+  <div class="connector-vertical">
+    <div class="pipe"></div>
+    <div class="label">DATABASE_URL / QDRANT_URL</div>
+    <div class="pipe"></div>
+    <div class="arrow-v"></div>
+  </div>
+
+  <!-- ═══ CAPA DATOS ═══ -->
+  <div class="section-title">Capa de Datos</div>
+  <div class="row">
+
+    <div class="block database half">
+      <h3>&#128451; PostgreSQL 16 <span class="badge">Relacional</span></h3>
+      <ul>
+        <li><strong>users</strong> — id, email, name, password_hash, email_verified_at</li>
+        <li><strong>auth_sessions</strong> — refresh_token_hash, expires_at, revoked_at (rotación)</li>
+        <li><strong>magic_links</strong> — token_hash, expires_at, consumed_at (uso único)</li>
+        <li><strong>user_agent_configs</strong> — config_json (JSONB, perfiles de agentes)</li>
+        <li><strong>user_conversations</strong> — conversations_json (JSONB, historial)</li>
+        <li><strong>user_documents</strong> — metadata de archivos (file_name, chunk_count, agent_id)</li>
+      </ul>
+    </div>
+
+    <div class="block database half">
+      <h3>&#128269; Qdrant <span class="badge">Vector DB</span> <span class="badge">Cloud</span></h3>
+      <ul>
+        <li><strong>Collection</strong>: agent_documents</li>
+        <li><strong>Vectores</strong>: 1536 dims (text-embedding-3-small)</li>
+        <li><strong>Distancia</strong>: Cosine similarity</li>
+        <li><strong>Payload</strong>: user_id, agent_id, file_id, chunk_text, file_name</li>
+        <li><strong>Índices</strong>: user_id, agent_id, file_id (keyword)</li>
+        <li><strong>Batch</strong>: upsert de 100 puntos, embed de 20 chunks</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- ═══ SERVICIOS EXTERNOS ═══ -->
+  <div class="section-title">Servicios Externos</div>
+  <div class="row">
+
+    <div class="block external third">
+      <h3>&#129302; OpenAI <span class="badge">Realtime + Embeddings</span></h3>
+      <ul>
+        <li><strong>Realtime API</strong>: gpt-4o-realtime-preview</li>
+        <li>WebSocket: wss://api.openai.com/v1/realtime</li>
+        <li>Token efímero (1h TTL) vía backend</li>
+        <li>VAD server-side, transcripción español</li>
+        <li><strong>Embeddings</strong>: text-embedding-3-small</li>
+        <li>Batch de 20 inputs, 1536 dimensiones</li>
+      </ul>
+    </div>
+
+    <div class="block external third">
+      <h3>&#128231; SMTP <span class="badge">Email</span></h3>
+      <ul>
+        <li>Magic links de autenticación</li>
+        <li>Configurable: host, port, user, pass</li>
+        <li>Dev: MailHog (mock)</li>
+        <li>Prod: SMTP real (por configurar)</li>
+      </ul>
+    </div>
+
+    <div class="block external third">
+      <h3>&#128274; Google OAuth 2.0</h3>
+      <ul>
+        <li>Flujo: init → consent → callback → poll</li>
+        <li>Exchange code por ID token</li>
+        <li>Auto-crea usuario en DB</li>
+        <li>State con TTL de 5 min</li>
+      </ul>
+    </div>
+
+  </div>
+
+  <!-- ═══ FLUJOS CLAVE ═══ -->
+  <div class="section-title">Flujos Clave</div>
+
+  <div class="block backend full">
+    <h3>&#127908; Sesión de Grabación en Tiempo Real</h3>
+    <div class="flow-box">
+      <div class="flow-step">App pide<br>token efímero</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Backend llama<br>OpenAI /sessions</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">App abre 2<br>WebSockets</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">FFmpeg captura<br>audio sistema</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">PCM → buffer<br>→ commit</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">OpenAI VAD<br>transcribe</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Streaming<br>respuesta IA</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Guardar<br>conversación</div>
+    </div>
+  </div>
+
+  <div class="block database full">
+    <h3>&#128196; Pipeline RAG (Documentos)</h3>
+    <div class="flow-box">
+      <div class="flow-step">Upload<br>PDF/DOCX/TXT</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Extraer texto<br>(pdf-parse/mammoth)</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Chunking<br>2000 chars / 400 overlap</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Embedding<br>OpenAI (batch 20)</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Upsert<br>Qdrant</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step">Metadata<br>PostgreSQL</div>
+    </div>
+    <div class="flow-box" style="margin-top:16px;">
+      <div class="flow-step" style="border-color:#a78bfa;">Query<br>del usuario</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="border-color:#a78bfa;">Embed<br>query</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="border-color:#a78bfa;">Search Qdrant<br>top-5 cosine</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="border-color:#a78bfa;">Inject context<br>→ OpenAI Realtime</div>
+      <div class="flow-arrow">→</div>
+      <div class="flow-step" style="border-color:#a78bfa;">Respuesta<br>con contexto RAG</div>
+    </div>
+  </div>
+
+  <!-- ═══ VARIABLES DE ENTORNO ═══ -->
+  <div class="section-title">Variables de Entorno (.env)</div>
+  <div class="block backend full">
+    <h3>&#128273; Configuración requerida</h3>
+    <div class="env-grid">
+      <div class="env-item">DATABASE_URL</div>
+      <div class="env-item">JWT_SECRET (32+ chars)</div>
+      <div class="env-item">OPENAI_API_KEY</div>
+      <div class="env-item">OPENAI_REALTIME_MODEL</div>
+      <div class="env-item">OPENAI_EMBEDDING_MODEL</div>
+      <div class="env-item">QDRANT_URL</div>
+      <div class="env-item">QDRANT_API_KEY</div>
+      <div class="env-item">CORS_ORIGIN</div>
+      <div class="env-item">BACKEND_PUBLIC_URL</div>
+      <div class="env-item">MAGIC_LINK_BASE_URL</div>
+      <div class="env-item">SMTP_HOST / PORT / USER / PASS</div>
+      <div class="env-item">GOOGLE_CLIENT_ID</div>
+      <div class="env-item">GOOGLE_CLIENT_SECRET</div>
+      <div class="env-item">ACCESS_TOKEN_TTL (15m)</div>
+      <div class="env-item">REFRESH_TOKEN_TTL_DAYS (30)</div>
+    </div>
+  </div>
+
+  <!-- ═══ INFRAESTRUCTURA ═══ -->
+  <div class="section-title">Infraestructura</div>
+  <div class="row">
+    <div class="block client third">
+      <h3>&#128187; Servidor VPS <span class="badge">144.208.66.171</span></h3>
+      <ul>
+        <li>AlmaLinux 8.10 (InMotion Hosting)</li>
+        <li>4 CPU cores / 4 GB RAM</li>
+        <li>Docker 26.1.3 + Compose v2.27</li>
+        <li>PostgreSQL 16.13 nativo</li>
+        <li>Apache + ProxyPass</li>
+        <li>cPanel para dominios</li>
+      </ul>
+    </div>
+    <div class="block landing third">
+      <h3>&#127968; Sitios en el servidor</h3>
+      <ul>
+        <li><strong>easyexpert1/</strong> — Landing page (HTML)</li>
+        <li><strong>easytalent.top/</strong> — RRHH (Django/Gunicorn)</li>
+        <li><strong>easycrm.top/</strong> — CRM</li>
+        <li><strong>easychat.top/</strong> — Chat</li>
+        <li><strong>easypipe.us/</strong> — Pipeline</li>
+        <li><strong>[nuevo]</strong> API EasyExpert (Docker, :4000)</li>
+      </ul>
+    </div>
+    <div class="block external third">
+      <h3>&#9729;&#65039; Servicios Cloud</h3>
+      <ul>
+        <li><strong>Render</strong> — Backend actual (migrando)</li>
+        <li><strong>Qdrant Cloud</strong> — Vector DB (se mantiene)</li>
+        <li><strong>OpenAI</strong> — Realtime + Embeddings</li>
+        <li><strong>Google Cloud</strong> — OAuth credentials</li>
+      </ul>
+    </div>
+  </div>
+
+</div>
+
+</body>
+</html>
