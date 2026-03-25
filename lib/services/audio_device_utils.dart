@@ -123,10 +123,20 @@ bool _isLoopbackDevice(String name) {
 }
 
 /// Auto-detect a loopback device from the enumerated list.
+/// First tries Stereo Mix / hardware loopback, then falls back to
+/// virtual-audio-capturer (WASAPI loopback via DirectShow filter).
 /// Returns null if none found.
 AudioDeviceInfo? findLoopbackDevice(List<AudioDeviceInfo> devices) {
+  // 1) Try hardware loopback (Stereo Mix, etc.)
   for (final d in devices) {
     if (_isLoopbackDevice(d.name)) return d;
+  }
+  // 2) Try virtual-audio-capturer (bundled WASAPI loopback filter)
+  for (final d in devices) {
+    if (d.name.toLowerCase().contains('virtual-audio-capturer') ||
+        d.name.toLowerCase().contains('virtual audio capturer')) {
+      return d;
+    }
   }
   return null;
 }
