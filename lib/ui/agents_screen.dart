@@ -45,6 +45,25 @@ class _AgentsScreenState extends State<AgentsScreen> {
   }
 
   Future<void> _selectAgent(AgentProfile agent) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Cambiar agente'),
+        content: Text('¿Quieres seleccionar "${agent.name}" como tu agente activo?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancelar'),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Seleccionar'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
     setState(() => _switchingAgent = agent.name);
     final next = await AgentProfileStore.instance.setActiveAgent(agent.id);
     if (!mounted) return;
@@ -558,7 +577,11 @@ class _AgentCard extends StatelessWidget {
     final borderColor = isActive
         ? const Color(0xFF5CB2FF)
         : Colors.white.withValues(alpha: 0.12);
-    return Container(
+    return GestureDetector(
+      onTap: onSelect,
+      child: MouseRegion(
+        cursor: SystemMouseCursors.click,
+        child: Container(
       width: 270,
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
@@ -634,6 +657,7 @@ class _AgentCard extends StatelessWidget {
           ],
         ],
       ),
+    )),
     );
   }
 }
