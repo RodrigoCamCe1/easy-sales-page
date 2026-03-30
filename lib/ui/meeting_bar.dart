@@ -583,10 +583,14 @@ class _MeetingBarState extends State<MeetingBar> {
                                                 _chatScrollController,
                                             messages: _controller
                                                 .chatResponses,
+                                            pinnedMessages: _controller
+                                                .pinnedMessages,
                                             emptyText: _controller
                                                 .statusMessage,
                                             isThinking: _controller
                                                 .responseInFlight,
+                                            onTogglePin: _controller
+                                                .togglePin,
                                           ),
                               ),
                             ],
@@ -827,14 +831,18 @@ class _ChatPane extends StatelessWidget {
   const _ChatPane({
     required this.controller,
     required this.messages,
+    required this.pinnedMessages,
     required this.emptyText,
     required this.isThinking,
+    required this.onTogglePin,
   });
 
   final ScrollController controller;
   final List<ChatMessage> messages;
+  final List<ChatMessage> pinnedMessages;
   final String emptyText;
   final bool isThinking;
+  final void Function(int index) onTogglePin;
 
   @override
   Widget build(BuildContext context) {
@@ -865,96 +873,211 @@ class _ChatPane extends StatelessWidget {
         ? assistantTurnIds[assistantTurnIds.length - 2]
         : null;
 
-    return ListView.builder(
-      controller: controller,
-      physics: const ClampingScrollPhysics(),
-      padding: const EdgeInsets.only(top: 6, bottom: 10),
-      itemCount: itemCount,
-      itemBuilder: (context, index) {
-        final isThinkingRow = isThinking && index == itemCount - 1;
-        final role = isThinkingRow ? 'assistant' : messages[index].role;
-        final text = isThinkingRow
-            ? 'Asistente está pensando...'
-            : messages[index].text.trim();
-
-        final isAssistant = role == 'assistant';
-        final currentAssistantTurnId = isThinkingRow
-            ? latestAssistantTurnId
-            : messages[index].assistantTurnId;
-        final isFreestyle = !isThinkingRow && messages[index].isFreestyle;
-        const freestyleRed = Color(0xFFE53935);
-
-        return Align(
-          alignment:
-              isAssistant ? Alignment.centerLeft : Alignment.centerRight,
-          child: Container(
-            margin: const EdgeInsets.symmetric(vertical: 4),
-            padding:
-                const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
-            constraints: const BoxConstraints(maxWidth: 560),
+    return Column(
+      children: [
+        // ── Pinned messages section ──
+        if (pinnedMessages.isNotEmpty)
+          Container(
+            width: double.infinity,
+            constraints: const BoxConstraints(maxHeight: 150),
+            margin: const EdgeInsets.only(bottom: 6),
             decoration: BoxDecoration(
-              color: isFreestyle
-                  ? freestyleRed.withOpacity(0.12)
-                  : isAssistant
-                      ? ((latestAssistantTurnId != null &&
-                              currentAssistantTurnId ==
-                                  latestAssistantTurnId)
-                          ? colorScheme.primary.withOpacity(0.4)
-                          : (previousAssistantTurnId != null &&
-                                  currentAssistantTurnId ==
-                                      previousAssistantTurnId)
-                              ? colorScheme.primary.withOpacity(0.24)
-                              : colorScheme.surfaceContainerHighest
-                                  .withOpacity(0.56))
-                      : colorScheme.primary.withOpacity(0.36),
-              borderRadius: BorderRadius.circular(14),
+              color: const Color(0xFF1a1a2e),
+              borderRadius: BorderRadius.circular(10),
               border: Border.all(
-                color: isFreestyle
-                    ? freestyleRed.withOpacity(0.6)
-                    : colorScheme.outlineVariant.withOpacity(0.54),
+                color: const Color(0xFFFFD54F).withOpacity(0.3),
               ),
             ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               mainAxisSize: MainAxisSize.min,
               children: [
-                if (isFreestyle)
-                  Padding(
-                    padding: const EdgeInsets.only(bottom: 4),
-                    child: Row(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.auto_fix_high_rounded,
-                            size: 11,
-                            color: freestyleRed.withOpacity(0.8)),
-                        const SizedBox(width: 4),
-                        Text(
-                          'Modo libre · puede contener info no verificada',
+                Padding(
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                  child: Row(
+                    children: [
+                      Icon(Icons.star_rounded,
+                          size: 14,
+                          color: const Color(0xFFFFD54F).withOpacity(0.8)),
+                      const SizedBox(width: 4),
+                      Text(
+                        'Puntos clave (${pinnedMessages.length})',
+                        style:
+                            Theme.of(context).textTheme.labelSmall?.copyWith(
+                                  color: const Color(0xFFFFD54F),
+                                  fontWeight: FontWeight.w600,
+                                ),
+                      ),
+                    ],
+                  ),
+                ),
+                Flexible(
+                  child: ListView.builder(
+                    shrinkWrap: true,
+                    padding:
+                        const EdgeInsets.only(left: 10, right: 10, bottom: 6),
+                    itemCount: pinnedMessages.length,
+                    itemBuilder: (context, i) {
+                      final msg = pinnedMessages[i];
+                      return Padding(
+                        padding: const EdgeInsets.only(bottom: 4),
+                        child: Text(
+                          '• ${msg.text.trim()}',
                           style: Theme.of(context)
                               .textTheme
-                              .labelSmall
+                              .bodySmall
                               ?.copyWith(
-                                color: freestyleRed.withOpacity(0.8),
-                                fontSize: 10,
+                                color: colorScheme.onSurface.withOpacity(0.85),
+                                fontSize: 11,
                               ),
+                          maxLines: 2,
+                          overflow: TextOverflow.ellipsis,
                         ),
-                      ],
-                    ),
+                      );
+                    },
                   ),
-                Text(
-                  _fixMojibake(text),
-                  style: Theme.of(context).textTheme.bodyMedium?.copyWith(
-                        color: colorScheme.onSurface,
-                        fontStyle: isThinkingRow
-                            ? FontStyle.italic
-                            : FontStyle.normal,
-                      ),
                 ),
               ],
             ),
           ),
-        );
-      },
+        // ── Chat messages ──
+        Expanded(
+          child: ListView.builder(
+            controller: controller,
+            physics: const ClampingScrollPhysics(),
+            padding: const EdgeInsets.only(top: 6, bottom: 10),
+            itemCount: itemCount,
+            itemBuilder: (context, index) {
+              final isThinkingRow = isThinking && index == itemCount - 1;
+              final role =
+                  isThinkingRow ? 'assistant' : messages[index].role;
+              final text = isThinkingRow
+                  ? 'Asistente está pensando...'
+                  : messages[index].text.trim();
+
+              final isAssistant = role == 'assistant';
+              final currentAssistantTurnId = isThinkingRow
+                  ? latestAssistantTurnId
+                  : messages[index].assistantTurnId;
+              final isFreestyle =
+                  !isThinkingRow && messages[index].isFreestyle;
+              final isPinned = !isThinkingRow && messages[index].pinned;
+              const freestyleRed = Color(0xFFE53935);
+
+              return Align(
+                alignment: isAssistant
+                    ? Alignment.centerLeft
+                    : Alignment.centerRight,
+                child: GestureDetector(
+                  onDoubleTap: isAssistant && !isThinkingRow
+                      ? () => onTogglePin(index)
+                      : null,
+                  child: Container(
+                    margin: const EdgeInsets.symmetric(vertical: 4),
+                    padding: const EdgeInsets.symmetric(
+                        horizontal: 12, vertical: 10),
+                    constraints: const BoxConstraints(maxWidth: 560),
+                    decoration: BoxDecoration(
+                      color: isFreestyle
+                          ? freestyleRed.withOpacity(0.12)
+                          : isAssistant
+                              ? ((latestAssistantTurnId != null &&
+                                      currentAssistantTurnId ==
+                                          latestAssistantTurnId)
+                                  ? colorScheme.primary.withOpacity(0.4)
+                                  : (previousAssistantTurnId != null &&
+                                          currentAssistantTurnId ==
+                                              previousAssistantTurnId)
+                                      ? colorScheme.primary.withOpacity(0.24)
+                                      : colorScheme.surfaceContainerHighest
+                                          .withOpacity(0.56))
+                              : colorScheme.primary.withOpacity(0.36),
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(
+                        color: isPinned
+                            ? const Color(0xFFFFD54F).withOpacity(0.7)
+                            : isFreestyle
+                                ? freestyleRed.withOpacity(0.6)
+                                : colorScheme.outlineVariant
+                                    .withOpacity(0.54),
+                        width: isPinned ? 1.5 : 1.0,
+                      ),
+                    ),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        if (isFreestyle)
+                          Padding(
+                            padding: const EdgeInsets.only(bottom: 4),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(Icons.auto_fix_high_rounded,
+                                    size: 11,
+                                    color: freestyleRed.withOpacity(0.8)),
+                                const SizedBox(width: 4),
+                                Text(
+                                  'Modo libre · puede contener info no verificada',
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .labelSmall
+                                      ?.copyWith(
+                                        color:
+                                            freestyleRed.withOpacity(0.8),
+                                        fontSize: 10,
+                                      ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        Row(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Expanded(
+                              child: Text(
+                                _fixMojibake(text),
+                                style: Theme.of(context)
+                                    .textTheme
+                                    .bodyMedium
+                                    ?.copyWith(
+                                      color: colorScheme.onSurface,
+                                      fontStyle: isThinkingRow
+                                          ? FontStyle.italic
+                                          : FontStyle.normal,
+                                    ),
+                              ),
+                            ),
+                            if (isAssistant && !isThinkingRow)
+                              GestureDetector(
+                                onTap: () => onTogglePin(index),
+                                child: Padding(
+                                  padding:
+                                      const EdgeInsets.only(left: 6, top: 2),
+                                  child: Icon(
+                                    isPinned
+                                        ? Icons.star_rounded
+                                        : Icons.star_outline_rounded,
+                                    size: 16,
+                                    color: isPinned
+                                        ? const Color(0xFFFFD54F)
+                                        : colorScheme.onSurface
+                                            .withOpacity(0.3),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+      ],
     );
   }
 }

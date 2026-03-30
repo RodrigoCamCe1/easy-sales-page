@@ -14,9 +14,11 @@ import '../services/backend_data_api.dart';
 import '../services/conversation_store.dart';
 import '../core/app_config.dart';
 import '../services/store_helpers.dart';
+import '../services/onboarding_service.dart';
 import 'admin_panel_screen.dart';
 import 'agents_screen.dart';
 import 'loading_overlay.dart';
+import 'onboarding_overlay.dart';
 import 'settings_panel.dart';
 
 class HomeScreen extends StatefulWidget {
@@ -37,6 +39,17 @@ class _HomeScreenState extends State<HomeScreen> {
   String? _loadingAction; // null = no loading, otherwise shows message
   WindowController? _barWindow;
   AgentProfile? _activeAgent;
+  bool _showOnboarding = false;
+
+  // ── Onboarding GlobalKeys ──
+  final _keyHelp = GlobalKey();
+  final _keySettings = GlobalKey();
+  final _keySearch = GlobalKey();
+  final _keyAgentPill = GlobalKey();
+  final _keyStartButton = GlobalKey();
+  final _keyProfile = GlobalKey();
+  final _keyCalendar = GlobalKey();
+  final _keyConversations = GlobalKey();
 
   // ── Calendar state ──
   bool _calendarConnected = false;
@@ -50,6 +63,7 @@ class _HomeScreenState extends State<HomeScreen> {
     _loadConversations();
     _loadActiveAgent();
     _loadCalendarStatus();
+    _checkOnboarding();
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       switch (call.method) {
         case 'barOpened':
@@ -567,6 +581,69 @@ class _HomeScreenState extends State<HomeScreen> {
     }
   }
 
+  Future<void> _checkOnboarding() async {
+    final completed = await OnboardingService.instance.isCompleted('home');
+    if (!completed && mounted) {
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (mounted) setState(() => _showOnboarding = true);
+    }
+  }
+
+  void _startOnboarding() {
+    setState(() => _showOnboarding = true);
+  }
+
+  void _endOnboarding() {
+    OnboardingService.instance.markCompleted('home');
+    if (mounted) setState(() => _showOnboarding = false);
+  }
+
+  List<OnboardingStep> _buildOnboardingSteps() => [
+        OnboardingStep(
+          key: _keyHelp,
+          title: 'Ayuda',
+          description: 'Aquí puedes ver un resumen de todas las funciones de la app y repetir este tutorial.',
+        ),
+        OnboardingStep(
+          key: _keySettings,
+          title: 'Configuración',
+          description: 'Selecciona tu micrófono, dispositivo de audio del sistema y edita el prompt de tu agente.',
+        ),
+        OnboardingStep(
+          key: _keySearch,
+          title: 'Buscar conversaciones',
+          description: 'Busca entre tus conversaciones guardadas por texto o filtra por fecha y favoritos.',
+        ),
+        OnboardingStep(
+          key: _keyAgentPill,
+          title: 'Tu agente activo',
+          description: 'Toca aquí para ver y cambiar entre tus agentes de IA. Cada agente tiene su personalidad y documentos.',
+        ),
+        OnboardingStep(
+          key: _keyStartButton,
+          title: 'Iniciar sesión de IA',
+          description: 'Elige entre modo virtual (llamadas por computadora) o reunión presencial (solo micrófono).',
+          position: OnboardingPosition.left,
+        ),
+        OnboardingStep(
+          key: _keyCalendar,
+          title: 'Calendario',
+          description: 'Conecta tu Google Calendar para ver los eventos del día y agendar reuniones directamente desde aquí.',
+          position: OnboardingPosition.left,
+        ),
+        OnboardingStep(
+          key: _keyConversations,
+          title: 'Conversaciones guardadas',
+          description: 'Aquí se guardan todas tus sesiones. Toca los tres puntos (⋮) de cada conversación para renombrar, marcar como favorita o eliminar.',
+        ),
+        OnboardingStep(
+          key: _keyProfile,
+          title: 'Tu perfil',
+          description: 'Ve tu plan actual, cierra sesión o accede al panel de administración si eres admin.',
+          position: OnboardingPosition.left,
+        ),
+      ];
+
   void _showHelpDialog() {
     showDialog(
       context: context,
@@ -672,6 +749,25 @@ class _HomeScreenState extends State<HomeScreen> {
                             const Color(0xFF7FC3FF),
                           ),
                         ],
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  SizedBox(
+                    width: double.infinity,
+                    child: OutlinedButton.icon(
+                      onPressed: () {
+                        Navigator.pop(context);
+                        _startOnboarding();
+                      },
+                      icon: const Icon(Icons.replay_rounded, size: 18),
+                      label: const Text('Repetir tutorial interactivo'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF5CB2FF),
+                        side: BorderSide(
+                          color: const Color(0xFF5CB2FF).withValues(alpha: 0.3),
+                        ),
+                        padding: const EdgeInsets.symmetric(vertical: 12),
                       ),
                     ),
                   ),
@@ -854,22 +950,29 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Row(
                       children: [
-                        _IconPill(
-                          icon: Icons.help_outline_rounded,
-                          tooltip: 'Tutorial',
-                          onTap: _showHelpDialog,
+                        Container(
+                          key: _keyHelp,
+                          child: _IconPill(
+                            icon: Icons.help_outline_rounded,
+                            tooltip: 'Tutorial',
+                            onTap: _showHelpDialog,
+                          ),
                         ),
                         const SizedBox(width: 8),
-                        _IconPill(
-                          icon: Icons.settings_rounded,
-                          tooltip: 'Configuracion',
-                          onTap: _toggleSettings,
+                        Container(
+                          key: _keySettings,
+                          child: _IconPill(
+                            icon: Icons.settings_rounded,
+                            tooltip: 'Configuracion',
+                            onTap: _toggleSettings,
+                          ),
                         ),
                       ],
                     ),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Container(
+                        key: _keySearch,
                         height: 38,
                         decoration: BoxDecoration(
                           color: Colors.white.withOpacity(0.06),
@@ -959,6 +1062,7 @@ class _HomeScreenState extends State<HomeScreen> {
                     ),
                     const SizedBox(width: 12),
                     PopupMenuButton<String>(
+                      key: _keyProfile,
                       tooltip: 'Perfil',
                       onSelected: (value) async {
                         if (value == 'logout') {
@@ -1038,13 +1142,17 @@ class _HomeScreenState extends State<HomeScreen> {
                             fit: BoxFit.contain,
                           ),
                           const SizedBox(width: 12),
-                          _SoftPill(
-                            label: _activeAgent?.name ?? 'Agente',
-                            icon: Icons.tune_rounded,
-                            onTap: _openAgentsScreen,
+                          Container(
+                            key: _keyAgentPill,
+                            child: _SoftPill(
+                              label: _activeAgent?.name ?? 'Agente',
+                              icon: Icons.tune_rounded,
+                              onTap: _openAgentsScreen,
+                            ),
                           ),
                           const Spacer(),
                           PopupMenuButton<String>(
+                            key: _keyStartButton,
                             onSelected: (value) {
                               if (value == 'virtual') {
                                 _openRecordingBar();
@@ -1120,18 +1228,22 @@ class _HomeScreenState extends State<HomeScreen> {
                           const SizedBox(width: 16),
                           Expanded(
                             flex: 2,
-                            child: _CalendarCard(
-                              connected: _calendarConnected,
-                              loading: _calendarLoading,
-                              events: _calendarEvents,
-                              onConnect: _connectCalendar,
-                              onCreateEvent: _showCreateEventDialog,
+                            child: Container(
+                              key: _keyCalendar,
+                              child: _CalendarCard(
+                                connected: _calendarConnected,
+                                loading: _calendarLoading,
+                                events: _calendarEvents,
+                                onConnect: _connectCalendar,
+                                onCreateEvent: _showCreateEventDialog,
+                              ),
                             ),
                           ),
                         ],
                       ),
                       const SizedBox(height: 18),
                       Row(
+                        key: _keyConversations,
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(
@@ -1195,6 +1307,11 @@ class _HomeScreenState extends State<HomeScreen> {
     ), // end Scaffold
         if (_loadingAction != null)
           LoadingOverlay(message: _loadingAction!),
+        if (_showOnboarding)
+          OnboardingOverlay(
+            steps: _buildOnboardingSteps(),
+            onComplete: _endOnboarding,
+          ),
       ],
     );
   }

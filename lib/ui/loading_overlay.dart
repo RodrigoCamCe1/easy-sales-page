@@ -48,11 +48,14 @@ class LoadingOverlay extends StatelessWidget {
                   Text(
                     message,
                     textAlign: TextAlign.center,
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 2,
                     style: const TextStyle(
                       color: Colors.white70,
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: FontWeight.w500,
                       letterSpacing: 0.2,
+                      decoration: TextDecoration.none,
                     ),
                   ),
                 ],

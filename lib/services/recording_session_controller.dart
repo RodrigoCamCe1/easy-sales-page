@@ -12,9 +12,12 @@ import '../models/conversation.dart';
 import '../models/session_models.dart';
 import 'audio_device_utils.dart';
 import 'audio_preferences_store.dart';
+import 'audio_vad_buffer.dart';
 import 'auth_session_manager.dart';
 import 'backend_data_api.dart';
+import 'chat_completion_client.dart';
 import 'conversation_store.dart';
+import 'groq_transcription_client.dart';
 import 'openai_realtime_client.dart';
 import 'realtime_session_api.dart';
 import 'store_helpers.dart';
@@ -106,6 +109,14 @@ class RecordingSessionController extends ChangeNotifier {
   StreamSubscription<List<int>>? _audioSubscriptionSystem;
   StreamSubscription<List<int>>? _audioSubscriptionMic;
 
+  // ── Groq STT Pipeline ──────────────────────────────────────────────────
+  GroqTranscriptionClient? _groqClient;
+  ChatCompletionClient? _chatClient;
+  ChatCompletionClient? _suggestionsClient;
+  AudioVadBuffer? _systemVadBuffer;
+  AudioVadBuffer? _micVadBuffer;
+  bool _groqPipelineActive = false;
+
   // ── Public read-only state ───────────────────────────────────────────────
   bool get listening => _listening;
   Duration get elapsed => _elapsed;
@@ -135,7 +146,7 @@ class RecordingSessionController extends ChangeNotifier {
   static const Duration _voiceResponseMinInterval = Duration(seconds: 8);
   static const int _transcriptIdleFlushMs = 1700;
   static const Duration _micTranscriptMergeWindow = Duration(seconds: 6);
-  static const Duration _autoStopSilenceTimeout = Duration(seconds: 21);
+  static const Duration _autoStopSilenceTimeout = Duration(seconds: 50);
   static const int _minSystemCharsPerTurn = 15;
   static const int _novelSystemWordsToBypassCooldown = 6;
 
@@ -166,15 +177,19 @@ class RecordingSessionController extends ChangeNotifier {
   Future<void> startListening() async {
     if (_listening) return;
 
-    // Ephemeral tokens are single-use; each OpenAI client needs its own.
-    final micKey = await _resolveOpenAIToken();
-    if (micKey.isEmpty) {
-      _statusMessage =
-          'No se pudo obtener credenciales de OpenAI. Configura OPENAI_API_KEY en el backend.';
-      _safeNotify();
-      return;
+    // When Groq pipeline is active, we don't need OpenAI ephemeral tokens at all.
+    String micKey = '';
+    String systemKey = '';
+    if (!useGroqPipeline || groqApiKey.isEmpty) {
+      micKey = await _resolveOpenAIToken();
+      if (micKey.isEmpty) {
+        _statusMessage =
+            'No se pudo obtener credenciales de OpenAI. Configura OPENAI_API_KEY en el backend.';
+        _safeNotify();
+        return;
+      }
+      systemKey = await _resolveOpenAIToken();
     }
-    final systemKey = await _resolveOpenAIToken();
 
     await _openAIClientMic?.close();
     await _openAIClientSystem?.close();
@@ -235,42 +250,91 @@ class RecordingSessionController extends ChangeNotifier {
       }
     }
 
-    _openAIClientMic = OpenAIRealtimeClient(
-      openAIKey: micKey,
-      model: openAIRealtimeModel,
-      vadSilenceMs: vadSilenceMs,
-      transcriptionOnly: true,
-      onDelta: (_) {},
-      onTranscriptDelta: (t) => _appendTranscriptDelta(t, source: 'mic'),
-      onComplete: () => _appendTranscriptDelta('\n', source: 'mic'),
-      onLog: _addLog,
-      showEvents: showOpenAIEvents,
-      sourceTag: 'mic',
-    );
-
+    _openAIClientMic = null;
     _openAIClientSystem = null;
+    _groqPipelineActive = false;
     final hasSystemDevice = Platform.isWindows;
-    if (hasSystemDevice) {
-      _openAIClientSystem = OpenAIRealtimeClient(
-        openAIKey: systemKey.isNotEmpty ? systemKey : micKey,
+
+    if (useGroqPipeline && groqApiKey.isNotEmpty) {
+      // ── Full Groq pipeline: mic + system via Groq Whisper + Groq Llama 3.3 ──
+      _groqPipelineActive = true;
+      _addLog('🔄 Pipeline completo Groq: mic y sistema sin OpenAI Realtime');
+
+      _groqClient = GroqTranscriptionClient(
+        apiKey: groqApiKey,
+        model: groqModel,
+        language: 'es',
+        onLog: _addLog,
+      );
+
+      _chatClient = ChatCompletionClient(
+        apiKey: groqApiKey,
+        onLog: _addLog,
+      );
+      _chatClient!.setSystemPrompt(_buildChatOnlyPrompt());
+
+      _suggestionsClient = ChatCompletionClient(
+        apiKey: groqApiKey,
+        onLog: _addLog,
+      );
+      _suggestionsClient!.setSystemPrompt(_buildSuggestionsOnlyPrompt());
+
+      // VAD for system audio → transcription + responses
+      _systemVadBuffer = AudioVadBuffer(
+        silenceThresholdDb: -50.0,
+        silenceDurationMs: 800,
+        minSpeechDurationMs: 300,
+        maxBufferDurationMs: 12000,
+        onSpeechComplete: _onGroqSpeechComplete,
+      )..onLog = _addLog;
+
+      // VAD for mic audio → transcription only
+      _micVadBuffer = AudioVadBuffer(
+        silenceThresholdDb: -55.0,
+        silenceDurationMs: 2000,
+        minSpeechDurationMs: 500,
+        maxBufferDurationMs: 30000,
+        onSpeechComplete: _onGroqMicSpeechComplete,
+      )..onLog = _addLog;
+    } else {
+      // ── Original OpenAI Realtime pipeline ──
+      _openAIClientMic = OpenAIRealtimeClient(
+        openAIKey: micKey,
         model: openAIRealtimeModel,
         vadSilenceMs: vadSilenceMs,
-        sessionInstructions: _buildSessionInstructions(),
-        onDelta: _appendResponseDelta,
-        onTranscriptDelta: (t) => _appendTranscriptDelta(t, source: 'sys'),
-        onComplete: () {
-          _appendTranscriptDelta('\n', source: 'sys');
-          _handleResponseComplete();
-        },
+        transcriptionOnly: true,
+        onDelta: (_) {},
+        onTranscriptDelta: (t) => _appendTranscriptDelta(t, source: 'mic'),
+        onComplete: () => _appendTranscriptDelta('\n', source: 'mic'),
         onLog: _addLog,
         showEvents: showOpenAIEvents,
-        sourceTag: 'system',
+        sourceTag: 'mic',
       );
+
+      if (hasSystemDevice) {
+        _openAIClientSystem = OpenAIRealtimeClient(
+          openAIKey: systemKey.isNotEmpty ? systemKey : micKey,
+          model: openAIRealtimeModel,
+          vadSilenceMs: vadSilenceMs,
+          sessionInstructions: _buildSessionInstructions(),
+          onDelta: _appendResponseDelta,
+          onTranscriptDelta: (t) => _appendTranscriptDelta(t, source: 'sys'),
+          onComplete: () {
+            _appendTranscriptDelta('\n', source: 'sys');
+            _handleResponseComplete();
+          },
+          onLog: _addLog,
+          showEvents: showOpenAIEvents,
+          sourceTag: 'system',
+        );
+      }
     }
 
     try {
-      await _openAIClientMic?.connect();
-      await _openAIClientSystem?.connect();
+      if (!_groqPipelineActive) {
+        await _openAIClientMic?.connect();
+        await _openAIClientSystem?.connect();
+      }
     } catch (error) {
       _listening = false;
       _statusMessage = 'No se pudo conectar con OpenAI: $error';
@@ -282,7 +346,9 @@ class RecordingSessionController extends ChangeNotifier {
 
     _listening = true;
     _statusMessage = Platform.isWindows
-        ? 'Conectado a OpenAI. Escuchando audio del sistema...'
+        ? (_groqPipelineActive
+            ? 'Conectado (Groq + Groq Llama 3.3). Escuchando audio del sistema...'
+            : 'Conectado a OpenAI. Escuchando audio del sistema...')
         : 'Conectado a OpenAI. Escuchando microfono...';
     _safeNotify();
     _scheduleSilenceAutoStop();
@@ -327,7 +393,11 @@ class RecordingSessionController extends ChangeNotifier {
       onRequestStopPlatformCapture?.call();
     }
 
-    if (_pendingSystemBytes > 0) {
+    // Flush Groq pipeline buffers
+    _systemVadBuffer?.forceFlush();
+    _micVadBuffer?.forceFlush();
+
+    if (_pendingSystemBytes > 0 && !_groqPipelineActive) {
       final committed = await _openAIClientSystem?.commitBuffer() ?? false;
       if (committed) _pendingSystemBytes = 0;
     }
@@ -346,6 +416,17 @@ class RecordingSessionController extends ChangeNotifier {
       _openAIClientMic = null;
       await _openAIClientSystem?.close();
       _openAIClientSystem = null;
+      _groqClient?.close();
+      _groqClient = null;
+      _chatClient?.close();
+      _chatClient = null;
+      _suggestionsClient?.close();
+      _suggestionsClient = null;
+      _systemVadBuffer?.dispose();
+      _systemVadBuffer = null;
+      _micVadBuffer?.dispose();
+      _micVadBuffer = null;
+      _groqPipelineActive = false;
       await _maybeSaveConversation();
     }
   }
@@ -634,6 +715,123 @@ class RecordingSessionController extends ChangeNotifier {
     onScrollTranscriptToBottom?.call();
   }
 
+  // ── Groq pipeline: called when VAD detects speech complete ──────────────
+  void _onGroqSpeechComplete(Uint8List pcmBytes) async {
+    if (_disposed || !_groqPipelineActive) return;
+
+    final groq = _groqClient;
+    final chat = _chatClient;
+    if (groq == null || chat == null) return;
+
+    _addLog('🎙️ Groq: transcribiendo ${(pcmBytes.length / 48000).toStringAsFixed(1)}s de audio...');
+
+    // 1. Transcribe with Groq
+    final transcript = await groq.transcribe(pcmBytes);
+    if (transcript == null || transcript.trim().isEmpty) {
+      _addLog('🔇 Groq: audio sin habla detectada');
+      return;
+    }
+
+    // 2. Show transcription in UI
+    _appendTranscriptDelta(transcript, source: 'sys');
+    _appendTranscriptDelta('\n', source: 'sys');
+
+    _addLog('🖥️ Groq transcripción: "$transcript"');
+
+    // 3. Build prompt with recent conversation context + RAG
+    final recentTranscripts = <String>[];
+    for (final t in _transcripts) {
+      final trimmed = t.trim();
+      if (trimmed.isEmpty) continue;
+      final clean = trimmed
+          .replaceFirst(RegExp(r'^🎤\s*'), '')
+          .replaceFirst(RegExp(r'^🖥️?\s*'), '')
+          .trim();
+      if (clean.isNotEmpty) recentTranscripts.add(clean);
+    }
+    // Keep last 10 lines for context
+    final contextLines = recentTranscripts.length > 10
+        ? recentTranscripts.sublist(recentTranscripts.length - 10)
+        : recentTranscripts;
+
+    final buf = StringBuffer();
+    if (_ragContext.isNotEmpty) {
+      buf.writeln('CONTEXTO DE DOCUMENTOS:');
+      buf.writeln(_ragContext);
+      buf.writeln();
+    }
+    if (contextLines.isNotEmpty) {
+      buf.writeln('CONVERSACIÓN RECIENTE:');
+      buf.writeln(contextLines.join('\n'));
+      buf.writeln();
+    }
+    buf.writeln('ÚLTIMO FRAGMENTO (responde a esto):');
+    buf.writeln(transcript);
+    final userMessage = buf.toString();
+
+    // 4. Get response + suggestions in parallel from Groq Llama 3.3
+    _currentResponse = '';
+    _addLog('🤖 Groq Llama 3.3: generando respuesta + sugerencias...');
+
+    final suggestionsClient = _suggestionsClient;
+
+    // Launch both in parallel
+    final chatFuture = chat.sendMessage(
+      userMessage: userMessage,
+      onDelta: (delta) {
+        _appendResponseDelta(delta);
+      },
+      onComplete: () {
+        _appendTranscriptDelta('\n', source: 'sys');
+        _handleResponseComplete();
+      },
+    );
+
+    final suggestionsFuture = suggestionsClient != null
+        ? suggestionsClient.sendMessage(
+            userMessage: userMessage,
+            onDelta: (_) {},
+            onComplete: () {},
+          )
+        : Future.value('');
+
+    final results = await Future.wait([chatFuture, suggestionsFuture]);
+
+    // Parse suggestions from the dedicated client
+    final suggestionsText = results[1];
+    if (suggestionsText.isNotEmpty) {
+      final lines = suggestionsText.split('\n');
+      _suggestions.clear();
+      for (final line in lines) {
+        final t = line.trim();
+        if (t.isEmpty) continue;
+        // Strip "Pregunta sugerida:" prefix
+        final colonIdx = t.indexOf(':');
+        if (colonIdx >= 0 && colonIdx < t.length - 1) {
+          _suggestions.add(t.substring(colonIdx + 1).trim());
+        } else {
+          _suggestions.add(t);
+        }
+      }
+      _safeNotify();
+    }
+  }
+
+  // ── Groq pipeline: mic speech complete → transcription only ──────────────
+  void _onGroqMicSpeechComplete(Uint8List pcmBytes) async {
+    if (_disposed || !_groqPipelineActive) return;
+
+    final groq = _groqClient;
+    if (groq == null) return;
+
+    final transcript = await groq.transcribe(pcmBytes);
+    if (transcript == null || transcript.trim().isEmpty) return;
+
+    // Show mic transcription in UI (no response generation)
+    _appendTranscriptDelta(transcript, source: 'mic');
+    _appendTranscriptDelta('\n', source: 'mic');
+  }
+
   void _handleResponseComplete() {
     _statusMessage = 'Respuesta completa';
     _safeNotify();
@@ -910,7 +1108,11 @@ class RecordingSessionController extends ChangeNotifier {
 
   void _appendAudio(Uint8List bytes) {
     _pendingMicBytes += bytes.length;
-    _openAIClientMic?.appendAudio(bytes);
+    if (_groqPipelineActive) {
+      _micVadBuffer?.addAudio(bytes);
+    } else {
+      _openAIClientMic?.appendAudio(bytes);
+    }
     _logAudioLevel(bytes, label: 'mic');
   }
 
@@ -921,6 +1123,7 @@ class RecordingSessionController extends ChangeNotifier {
   }
 
   Future<void> _maybeCommitSystem() async {
+    if (_groqPipelineActive) return; // VAD buffer handles this
     const minCommitBytesSystem = 7200; // 24kHz * 2B * 150ms
     if (_openAIClientSystem == null) return;
     if (_pendingSystemBytes < minCommitBytesSystem) return;
@@ -953,6 +1156,22 @@ class RecordingSessionController extends ChangeNotifier {
     return _openAIClientMic ?? _openAIClientSystem;
   }
 
+  /// Routes system audio to either Groq VAD buffer or OpenAI Realtime.
+  int _sysChunkCount = 0;
+  void _handleSystemAudioChunk(Uint8List bytes) {
+    _pendingSystemBytes += bytes.length;
+    _sysChunkCount++;
+    if (_sysChunkCount <= 3) {
+      _addLog('🔍 Sistema chunk #$_sysChunkCount: groqActive=$_groqPipelineActive vadNull=${_systemVadBuffer == null} bytes=${bytes.length}');
+    }
+    if (_groqPipelineActive) {
+      _systemVadBuffer?.addAudio(bytes);
+    } else {
+      _openAIClientSystem?.appendAudio(bytes);
+    }
+    _logAudioLevel(bytes, label: 'system');
+  }
+
   // ──────────────────────────────────────────────────────────────────────────
   // WINDOWS AUDIO
   // ──────────────────────────────────────────────────────────────────────────
@@ -982,11 +1201,7 @@ class RecordingSessionController extends ChangeNotifier {
       await _startWindowsDeviceCapture(
         label: 'system',
         device: manualSystemId,
-        onChunk: (bytes) {
-          _pendingSystemBytes += bytes.length;
-          _openAIClientSystem?.appendAudio(bytes);
-          _logAudioLevel(bytes, label: 'system');
-        },
+        onChunk: _handleSystemAudioChunk,
       );
       systemAudioActive = _audioProcessSystem != null;
       if (!systemAudioActive) {
@@ -994,11 +1209,7 @@ class RecordingSessionController extends ChangeNotifier {
         await _startWindowsDeviceCapture(
           label: 'system',
           device: store.systemDevice,
-          onChunk: (bytes) {
-            _pendingSystemBytes += bytes.length;
-            _openAIClientSystem?.appendAudio(bytes);
-            _logAudioLevel(bytes, label: 'system');
-          },
+          onChunk: _handleSystemAudioChunk,
         );
         systemAudioActive = _audioProcessSystem != null;
       }
@@ -1010,11 +1221,7 @@ class RecordingSessionController extends ChangeNotifier {
         await _startWindowsDeviceCapture(
           label: 'system',
           device: loopback.deviceId,
-          onChunk: (bytes) {
-            _pendingSystemBytes += bytes.length;
-            _openAIClientSystem?.appendAudio(bytes);
-            _logAudioLevel(bytes, label: 'system');
-          },
+          onChunk: _handleSystemAudioChunk,
         );
         systemAudioActive = _audioProcessSystem != null;
         if (!systemAudioActive) {
@@ -1022,11 +1229,7 @@ class RecordingSessionController extends ChangeNotifier {
           await _startWindowsDeviceCapture(
             label: 'system',
             device: loopback.name,
-            onChunk: (bytes) {
-              _pendingSystemBytes += bytes.length;
-              _openAIClientSystem?.appendAudio(bytes);
-              _logAudioLevel(bytes, label: 'system');
-            },
+            onChunk: _handleSystemAudioChunk,
           );
           systemAudioActive = _audioProcessSystem != null;
         }
@@ -1051,7 +1254,11 @@ class RecordingSessionController extends ChangeNotifier {
         useInputSampleRate: false,
         onChunk: (bytes) {
           _pendingMicBytes += bytes.length;
-          _openAIClientMic?.appendAudio(bytes);
+          if (_groqPipelineActive) {
+            _micVadBuffer?.addAudio(bytes);
+          } else {
+            _openAIClientMic?.appendAudio(bytes);
+          }
           _logAudioLevel(bytes, label: 'mic');
         },
       );
@@ -1243,11 +1450,56 @@ class RecordingSessionController extends ChangeNotifier {
       buf.writeln('MODO LIBRE ACTIVADO: Puedes responder usando tu conocimiento general, sin limitarte al documento ni al prompt. Está permitido especular o extrapolar información cuando sea útil para el vendedor.');
       buf.writeln();
     }
-    buf.writeln('Responde siempre en español. Usa exactamente estas dos secciones:');
+    buf.writeln('FORMATO OBLIGATORIO — respeta esta estructura exacta:');
+    buf.writeln('');
     buf.writeln('CHAT:');
-    buf.writeln('[4-8 líneas directas y accionables. Sin emojis ni JSON.]');
+    buf.writeln('Tu respuesta aquí. Máximo 5 líneas. Concisa y accionable. Sin emojis. Completa todas las palabras y oraciones.');
+    buf.writeln('');
     buf.writeln('SUGERENCIAS:');
-    buf.writeln('[Máx. 3 preguntas. Una por línea con formato: Pregunta sugerida: ...]');
+    buf.writeln('Pregunta sugerida: primera pregunta');
+    buf.writeln('Pregunta sugerida: segunda pregunta');
+    buf.writeln('Pregunta sugerida: tercera pregunta');
+    buf.writeln('');
+    buf.writeln('REGLAS:');
+    buf.writeln('- Escribe "CHAT:" y "SUGERENCIAS:" como separadores.');
+    buf.writeln('- Las preguntas van SOLO en SUGERENCIAS, nunca en CHAT.');
+    buf.writeln('- Cada pregunta empieza con "Pregunta sugerida:" en línea propia.');
+    buf.writeln('- Completa todas las palabras. No cortes frases a la mitad.');
+    buf.writeln('- Responde en español.');
+    return buf.toString();
+  }
+
+  String _buildChatOnlyPrompt() {
+    final buf = StringBuffer();
+    if (promptOverride.trim().isNotEmpty) {
+      buf.writeln(promptOverride.trim());
+      buf.writeln();
+    }
+    if (freestyleMode) {
+      buf.writeln('MODO LIBRE ACTIVADO: Puedes responder usando tu conocimiento general, sin limitarte al documento ni al prompt.');
+      buf.writeln();
+    }
+    buf.writeln('Responde de forma directa y accionable.');
+    buf.writeln('- Máximo 5 líneas.');
+    buf.writeln('- Sin emojis.');
+    buf.writeln('- Completa todas las palabras y oraciones, nunca cortes a la mitad.');
+    buf.writeln('- NO incluyas preguntas sugeridas ni secciones como SUGERENCIAS.');
+    buf.writeln('- Solo responde con el texto de ayuda para el usuario.');
+    buf.writeln('- Responde en español.');
+    return buf.toString();
+  }
+
+  String _buildSuggestionsOnlyPrompt() {
+    final buf = StringBuffer();
+    if (promptOverride.trim().isNotEmpty) {
+      buf.writeln(promptOverride.trim());
+      buf.writeln();
+    }
+    buf.writeln('Tu ÚNICA tarea es generar 3 preguntas relevantes que el usuario podría hacer basándose en la conversación.');
+    buf.writeln('- Responde SOLO con 3 preguntas, una por línea.');
+    buf.writeln('- Cada línea debe empezar con "Pregunta sugerida:"');
+    buf.writeln('- No incluyas explicaciones, respuestas ni texto adicional.');
+    buf.writeln('- Responde en español.');
     return buf.toString();
   }
 
@@ -1521,14 +1773,28 @@ class RecordingSessionController extends ChangeNotifier {
     }
 
     bool isSuggestionPrefix(String line) {
-      final t = line.trimLeft();
-      return t.toLowerCase().startsWith(_suggestionPrefix.toLowerCase());
+      final t = line.trimLeft().toLowerCase();
+      return t.startsWith(_suggestionPrefix.toLowerCase()) ||
+          t.startsWith('preguntaida:') ||
+          t.startsWith('pregunta ida:') ||
+          t.startsWith('suger:') ||
+          t.startsWith('sugerida:') ||
+          t.startsWith('pregunta:') ||
+          RegExp(r'^pregunta\s*sugerida\s*:', caseSensitive: false).hasMatch(t);
     }
 
     String stripPrefix(String line, String prefix) {
       final t = line.trim();
-      if (t.length <= prefix.length) return '';
-      return t.substring(prefix.length).trim();
+      // Try exact prefix first
+      if (t.length > prefix.length && t.toLowerCase().startsWith(prefix.toLowerCase())) {
+        return t.substring(prefix.length).trim();
+      }
+      // Try flexible match — strip everything before first ':'
+      final colonIdx = t.indexOf(':');
+      if (colonIdx >= 0 && colonIdx < t.length - 1) {
+        return t.substring(colonIdx + 1).trim();
+      }
+      return t;
     }
 
     // Caso A: no hay secciones

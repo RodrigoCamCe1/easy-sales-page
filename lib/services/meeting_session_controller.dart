@@ -107,6 +107,15 @@ class MeetingSessionController extends ChangeNotifier {
   DateTime? get sessionStartedAt => _sessionStartedAt;
   DateTime? get sessionEndedAt => _sessionEndedAt;
   List<String> get debugLogs => List.unmodifiable(_debugLogs);
+  List<ChatMessage> get pinnedMessages =>
+      _chatResponses.where((m) => m.pinned).toList();
+
+  void togglePin(int index) {
+    if (index < 0 || index >= _chatResponses.length) return;
+    final msg = _chatResponses[index];
+    _chatResponses[index] = msg.copyWith(pinned: !msg.pinned);
+    _safeNotify();
+  }
 
   // ── Constants ─────────────────────────────────────────────────────────
   static const Duration _voiceResponseMinInterval = Duration(seconds: 8);

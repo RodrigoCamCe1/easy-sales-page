@@ -9,7 +9,7 @@ const String appVersion = '1.4.8';
 const String githubRepo = 'RodrigoCamCe1/easy-sales-page';
 const double barHeight = 280.0;
 const String dartDefineOpenAIKey = String.fromEnvironment('OPENAI_API_KEY');
-const String defaultOpenAIRealtimeModel = 'gpt-4o-realtime-preview';
+const String defaultOpenAIRealtimeModel = 'gpt-4o-mini-realtime-preview';
 const bool showFfmpegLogs = false;
 const bool showOpenAIEvents = false;
 const String promptFileName = 'prompt.txt';
@@ -52,3 +52,16 @@ int get realtimeFlushSeconds =>
 
 String get backendApiBaseUrl =>
     (dotenv.env['BACKEND_API_URL'] ?? 'https://api.easyexpert.top').trim();
+
+// ── Groq STT Pipeline ──────────────────────────────────────────────────────
+/// When true, system audio uses Groq Whisper + GPT-4o-mini instead of OpenAI Realtime.
+bool get useGroqPipeline {
+  final val = dotenv.env['USE_GROQ_PIPELINE'] ?? 'false';
+  return val.trim().toLowerCase() == 'true';
+}
+
+String get groqApiKey => dotenv.env['GROQ_API_KEY'] ?? '';
+
+String get groqModel => dotenv.env['GROQ_MODEL'] ?? 'whisper-large-v3-turbo';
+
+String get chatCompletionModel => dotenv.env['CHAT_COMPLETION_MODEL'] ?? 'gpt-4o-mini';
