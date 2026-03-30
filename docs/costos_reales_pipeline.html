@@ -1,0 +1,684 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+<meta charset="UTF-8">
+<title>EasyExpert IA — Analisis de Costos Reales y Optimizacion de Pipeline</title>
+<style>
+  @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    font-family: 'Inter', 'Segoe UI', system-ui, sans-serif;
+    color: #1e293b;
+    line-height: 1.6;
+    padding: 48px 56px;
+    font-size: 11px;
+    background: #fff;
+  }
+
+  .doc-header {
+    text-align: center;
+    margin-bottom: 36px;
+    padding-bottom: 28px;
+    border-bottom: 3px solid #0a6fb7;
+  }
+  .doc-header h1 {
+    font-size: 26px;
+    font-weight: 800;
+    color: #0a6fb7;
+    margin-bottom: 4px;
+    letter-spacing: -0.02em;
+  }
+  .doc-header .subtitle {
+    font-size: 13px;
+    color: #64748b;
+    font-weight: 500;
+  }
+  .doc-header .date {
+    font-size: 10px;
+    color: #94a3b8;
+    margin-top: 8px;
+  }
+
+  .section {
+    margin-bottom: 28px;
+    page-break-inside: avoid;
+  }
+  .section-title {
+    font-size: 15px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 12px;
+    padding-bottom: 6px;
+    border-bottom: 2px solid #e2e8f0;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+  .section-title .num {
+    background: #0a6fb7;
+    color: #fff;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 12px;
+    font-weight: 700;
+    flex-shrink: 0;
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-bottom: 12px;
+    font-size: 10.5px;
+  }
+  th {
+    background: #f1f5f9;
+    color: #334155;
+    font-weight: 700;
+    text-align: left;
+    padding: 8px 12px;
+    border-bottom: 2px solid #e2e8f0;
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: 0.04em;
+  }
+  td {
+    padding: 7px 12px;
+    border-bottom: 1px solid #f1f5f9;
+    color: #475569;
+  }
+  tr:last-child td { border-bottom: none; }
+  .total-row td {
+    font-weight: 700;
+    color: #0f172a;
+    border-top: 2px solid #e2e8f0;
+    background: #f8fafc;
+  }
+  .highlight-row td {
+    background: #fef2f2;
+    color: #dc2626;
+    font-weight: 600;
+  }
+  .good-row td {
+    background: #f0fdf4;
+    color: #059669;
+    font-weight: 600;
+  }
+
+  .callout {
+    background: #eff6ff;
+    border-left: 4px solid #0a6fb7;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 10.5px;
+    color: #1e40af;
+  }
+  .callout strong { color: #0a6fb7; }
+
+  .callout-red {
+    background: #fef2f2;
+    border-left: 4px solid #dc2626;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 10.5px;
+    color: #991b1b;
+  }
+  .callout-red strong { color: #dc2626; }
+
+  .callout-green {
+    background: #f0fdf4;
+    border-left: 4px solid #059669;
+    padding: 10px 14px;
+    margin: 12px 0;
+    border-radius: 0 8px 8px 0;
+    font-size: 10.5px;
+    color: #065f46;
+  }
+  .callout-green strong { color: #059669; }
+
+  .comparison-grid {
+    display: grid;
+    grid-template-columns: 1fr auto 1fr;
+    gap: 16px;
+    align-items: center;
+    margin: 16px 0;
+  }
+  .comparison-box {
+    border: 1.5px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 20px;
+    text-align: center;
+  }
+  .comparison-box.bad {
+    background: #fef2f2;
+    border-color: #fecaca;
+  }
+  .comparison-box.good {
+    background: #f0fdf4;
+    border-color: #bbf7d0;
+  }
+  .comparison-box.best {
+    background: #eff6ff;
+    border-color: #93c5fd;
+  }
+  .comparison-box-title {
+    font-size: 9px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    font-weight: 600;
+    color: #94a3b8;
+    margin-bottom: 6px;
+  }
+  .comparison-box-amount {
+    font-size: 28px;
+    font-weight: 800;
+  }
+  .comparison-box-amount.red { color: #dc2626; }
+  .comparison-box-amount.green { color: #059669; }
+  .comparison-box-amount.blue { color: #0a6fb7; }
+  .comparison-box-detail {
+    font-size: 9px;
+    color: #64748b;
+    margin-top: 6px;
+  }
+  .vs-badge {
+    background: #0a6fb7;
+    color: #fff;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 700;
+  }
+  .arrow-badge {
+    background: #059669;
+    color: #fff;
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 16px;
+    font-weight: 700;
+  }
+
+  .margin-bar {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin: 6px 0;
+  }
+  .margin-bar-label {
+    font-size: 10px;
+    color: #475569;
+    width: 200px;
+    flex-shrink: 0;
+  }
+  .margin-bar-track {
+    flex: 1;
+    height: 22px;
+    background: #f1f5f9;
+    border-radius: 11px;
+    overflow: hidden;
+    position: relative;
+  }
+  .margin-bar-fill {
+    height: 100%;
+    border-radius: 11px;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    padding-right: 10px;
+    font-size: 10px;
+    font-weight: 700;
+    color: #fff;
+  }
+  .margin-bar-fill.red { background: linear-gradient(135deg, #dc2626, #ef4444); }
+  .margin-bar-fill.orange { background: linear-gradient(135deg, #ea580c, #f97316); }
+  .margin-bar-fill.green { background: linear-gradient(135deg, #059669, #06b6d4); }
+  .margin-bar-fill.blue { background: linear-gradient(135deg, #0a6fb7, #06b6d4); }
+
+  .plans-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 14px;
+    margin-top: 12px;
+  }
+  .plan-card {
+    border: 1.5px solid #e2e8f0;
+    border-radius: 12px;
+    padding: 16px 14px;
+    position: relative;
+  }
+  .plan-card.popular {
+    border-color: #0a6fb7;
+    box-shadow: 0 2px 12px rgba(10,111,183,0.12);
+  }
+  .plan-card.popular::before {
+    content: 'RECOMENDADO';
+    position: absolute;
+    top: -9px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #0a6fb7;
+    color: #fff;
+    font-size: 7px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    padding: 2px 10px;
+    border-radius: 4px;
+  }
+  .plan-name {
+    font-size: 13px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 2px;
+  }
+  .plan-price .amount {
+    font-size: 24px;
+    font-weight: 800;
+    color: #0a6fb7;
+  }
+  .plan-price .currency {
+    font-size: 13px;
+    font-weight: 700;
+    color: #64748b;
+    vertical-align: top;
+  }
+  .plan-price .period {
+    font-size: 10px;
+    color: #94a3b8;
+  }
+  .plan-margin {
+    margin-top: 8px;
+    padding-top: 8px;
+    border-top: 1px dashed #e2e8f0;
+    font-size: 9px;
+    color: #94a3b8;
+  }
+  .plan-margin strong {
+    color: #059669;
+  }
+  .plan-margin .bad {
+    color: #dc2626;
+  }
+
+  .phase-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 14px;
+    margin-top: 12px;
+  }
+  .phase-card {
+    border: 1.5px solid #e2e8f0;
+    border-radius: 10px;
+    padding: 14px;
+  }
+  .phase-card.active {
+    border-color: #059669;
+    background: #f0fdf4;
+  }
+  .phase-card.next {
+    border-color: #0a6fb7;
+    background: #eff6ff;
+  }
+  .phase-label {
+    font-size: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 700;
+    margin-bottom: 4px;
+  }
+  .phase-label.active { color: #059669; }
+  .phase-label.next { color: #0a6fb7; }
+  .phase-title {
+    font-size: 12px;
+    font-weight: 700;
+    color: #0f172a;
+    margin-bottom: 6px;
+  }
+  .phase-detail {
+    font-size: 9.5px;
+    color: #475569;
+    line-height: 1.5;
+  }
+
+  .doc-footer {
+    margin-top: 32px;
+    padding-top: 16px;
+    border-top: 1px solid #e2e8f0;
+    text-align: center;
+    font-size: 9px;
+    color: #94a3b8;
+  }
+
+  .page-break { page-break-before: always; }
+</style>
+</head>
+<body>
+
+  <div class="doc-header">
+    <h1>EasyExpert IA — Costos Reales y Optimizacion de Pipeline</h1>
+    <div class="subtitle">Analisis basado en datos reales de produccion + plan de migracion a pipeline optimizado</div>
+    <div class="date">Documento interno — EasyCorp SRL — Marzo 2026</div>
+  </div>
+
+  <!-- 1. Costos reales observados -->
+  <div class="section">
+    <div class="section-title"><span class="num">1</span> Costos Reales Observados (OpenAI Dashboard, 22-26 Mar 2026)</div>
+
+    <table>
+      <thead>
+        <tr><th>Componente API</th><th style="text-align:right">Costo Real</th><th style="text-align:right">% del Total</th></tr>
+      </thead>
+      <tbody>
+        <tr class="highlight-row"><td>gpt-4o-realtime-preview — Audio input</td><td style="text-align:right">$2.073</td><td style="text-align:right">74.2%</td></tr>
+        <tr><td>gpt-4o-realtime-preview — Text input</td><td style="text-align:right">$0.454</td><td style="text-align:right">16.3%</td></tr>
+        <tr><td>gpt-4o-realtime-preview — Text cached input</td><td style="text-align:right">$0.180</td><td style="text-align:right">6.4%</td></tr>
+        <tr><td>gpt-4o-realtime-preview — Text output</td><td style="text-align:right">$0.094</td><td style="text-align:right">3.4%</td></tr>
+        <tr class="total-row"><td>TOTAL (4 dias de pruebas)</td><td style="text-align:right">$2.801</td><td style="text-align:right">100%</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout-red">
+      <strong>Problema critico:</strong> El audio input del modelo Realtime representa el <strong>74% del costo total</strong>. Es el componente mas caro con diferencia. Cada minuto de audio procesado cuesta $0.06 — una sesion de 30 min cuesta $1.80 solo en audio input, sin contar texto.
+    </div>
+  </div>
+
+  <!-- 2. Costo por minuto actual -->
+  <div class="section">
+    <div class="section-title"><span class="num">2</span> Costo por Minuto: Pipeline Actual (main)</div>
+
+    <table>
+      <thead>
+        <tr><th>Componente</th><th>Servicio</th><th style="text-align:right">Costo/min</th></tr>
+      </thead>
+      <tbody>
+        <tr class="highlight-row"><td>Transcripcion mic</td><td>OpenAI Realtime API (gpt-4o-realtime-preview)</td><td style="text-align:right">$0.060</td></tr>
+        <tr class="highlight-row"><td>Transcripcion sistema + respuestas</td><td>OpenAI Realtime API (gpt-4o-realtime-preview)</td><td style="text-align:right">$0.060</td></tr>
+        <tr><td>Embeddings RAG</td><td>OpenAI ada-002</td><td style="text-align:right">~$0.001</td></tr>
+        <tr class="total-row"><td colspan="2">TOTAL por minuto de sesion</td><td style="text-align:right">$0.121</td></tr>
+      </tbody>
+    </table>
+
+    <table>
+      <thead>
+        <tr><th>Duracion de sesion</th><th style="text-align:right">Costo</th><th style="text-align:right">Costo mensual (1 sesion/dia)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>15 minutos</td><td style="text-align:right">$1.82</td><td style="text-align:right">$54.45</td></tr>
+        <tr><td>30 minutos</td><td style="text-align:right">$3.63</td><td style="text-align:right">$108.90</td></tr>
+        <tr><td>60 minutos</td><td style="text-align:right">$7.26</td><td style="text-align:right">$217.80</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout-red">
+      <strong>Insostenible:</strong> Un usuario Pro ($29/mes) que haga una sesion de 30 min/dia nos cuesta <strong>$108.90/mes</strong> — perdemos $79.90 por usuario. El modelo actual es deficitario con cualquier nivel de uso real.
+    </div>
+  </div>
+
+  <!-- 3. Pipeline optimizado -->
+  <div class="section page-break">
+    <div class="section-title"><span class="num">3</span> Pipeline Optimizado: Groq STT + GPT-4o-mini (en desarrollo)</div>
+
+    <table>
+      <thead>
+        <tr><th>Componente</th><th>Servicio</th><th style="text-align:right">Costo/min</th><th style="text-align:right">Ahorro vs actual</th></tr>
+      </thead>
+      <tbody>
+        <tr class="good-row"><td>Transcripcion mic</td><td>Groq Whisper large-v3-turbo</td><td style="text-align:right">$0.006</td><td style="text-align:right">-90%</td></tr>
+        <tr class="good-row"><td>Transcripcion sistema</td><td>Groq Whisper large-v3-turbo</td><td style="text-align:right">$0.006</td><td style="text-align:right">-90%</td></tr>
+        <tr class="good-row"><td>Respuestas IA</td><td>OpenAI GPT-4o-mini (Chat Completions)</td><td style="text-align:right">$0.001</td><td style="text-align:right">-98%</td></tr>
+        <tr><td>Embeddings RAG</td><td>OpenAI ada-002</td><td style="text-align:right">~$0.001</td><td style="text-align:right">—</td></tr>
+        <tr class="total-row"><td colspan="2">TOTAL por minuto de sesion</td><td style="text-align:right">$0.014</td><td style="text-align:right">-88%</td></tr>
+      </tbody>
+    </table>
+
+    <table>
+      <thead>
+        <tr><th>Duracion de sesion</th><th style="text-align:right">Costo actual</th><th style="text-align:right">Costo optimizado</th><th style="text-align:right">Ahorro</th></tr>
+      </thead>
+      <tbody>
+        <tr><td>15 minutos</td><td style="text-align:right">$1.82</td><td style="text-align:right">$0.21</td><td style="text-align:right">-88%</td></tr>
+        <tr><td>30 minutos</td><td style="text-align:right">$3.63</td><td style="text-align:right">$0.42</td><td style="text-align:right">-88%</td></tr>
+        <tr><td>60 minutos</td><td style="text-align:right">$7.26</td><td style="text-align:right">$0.84</td><td style="text-align:right">-88%</td></tr>
+      </tbody>
+    </table>
+
+    <div class="callout-green">
+      <strong>Resultado:</strong> El pipeline optimizado reduce el costo de <strong>$0.121/min a $0.014/min</strong> — una reduccion del 88%. Una sesion de 30 min pasa de $3.63 a $0.42. El modelo se vuelve rentable en todos los planes.
+    </div>
+  </div>
+
+  <!-- 4. Comparación visual -->
+  <div class="section">
+    <div class="section-title"><span class="num">4</span> Comparacion Visual: Costo Mensual por Usuario (1 sesion de 30 min/dia)</div>
+
+    <div class="comparison-grid">
+      <div class="comparison-box bad">
+        <div class="comparison-box-title">Pipeline Actual (main)</div>
+        <div class="comparison-box-amount red">$108.90</div>
+        <div class="comparison-box-detail">
+          OpenAI Realtime API<br>
+          gpt-4o-realtime-preview<br>
+          2 clientes WebSocket (mic + sistema)<br>
+          <strong>Perdida: -$79.90/usuario Pro</strong>
+        </div>
+      </div>
+      <div class="arrow-badge">&rarr;</div>
+      <div class="comparison-box good">
+        <div class="comparison-box-title">Pipeline Optimizado (Groq)</div>
+        <div class="comparison-box-amount green">$12.60</div>
+        <div class="comparison-box-detail">
+          Groq Whisper + GPT-4o-mini<br>
+          VAD local + HTTP requests<br>
+          Sin WebSockets<br>
+          <strong>Ganancia: +$16.40/usuario Pro</strong>
+        </div>
+      </div>
+    </div>
+
+    <div class="margin-bar">
+      <span class="margin-bar-label">Pipeline actual ($108.90/usuario)</span>
+      <div class="margin-bar-track"><div class="margin-bar-fill red" style="width:100%">-275% margen</div></div>
+    </div>
+    <div class="margin-bar">
+      <span class="margin-bar-label">Pipeline optimizado ($12.60/usuario)</span>
+      <div class="margin-bar-track"><div class="margin-bar-fill green" style="width:57%">57% margen</div></div>
+    </div>
+  </div>
+
+  <!-- 5. Impacto en pricing -->
+  <div class="section">
+    <div class="section-title"><span class="num">5</span> Impacto en Estructura de Precios</div>
+
+    <div class="plans-grid">
+      <div class="plan-card">
+        <div class="plan-name">Free</div>
+        <div class="plan-price">
+          <span class="currency">$</span><span class="amount">0</span><span class="period">/mes</span>
+        </div>
+        <div class="plan-margin">
+          Pipeline actual: <strong class="bad">-$0.95/usuario</strong><br>
+          Pipeline Groq: <strong>-$0.42/usuario</strong><br>
+          Reduccion de costo del tier gratuito: 56%
+        </div>
+      </div>
+
+      <div class="plan-card popular">
+        <div class="plan-name">Pro — $29/mes</div>
+        <div class="plan-price">
+          <span class="currency">$</span><span class="amount">29</span><span class="period">/mes</span>
+        </div>
+        <div class="plan-margin">
+          Pipeline actual: <strong class="bad">-$79.90 (PERDIDA)</strong><br>
+          Pipeline Groq: Costo $12.60 → <strong>Margen $16.40 (57%)</strong><br>
+          De deficitario a rentable
+        </div>
+      </div>
+
+      <div class="plan-card">
+        <div class="plan-name">Business — $79/mes</div>
+        <div class="plan-price">
+          <span class="currency">$</span><span class="amount">79</span><span class="period">/mes</span>
+        </div>
+        <div class="plan-margin">
+          Pipeline actual: <strong class="bad">-$29.90 (PERDIDA)</strong><br>
+          Pipeline Groq: Costo $25.20 → <strong>Margen $53.80 (68%)</strong><br>
+          De deficitario a altamente rentable
+        </div>
+      </div>
+    </div>
+
+    <div class="callout">
+      <strong>Conclusion:</strong> Sin el pipeline optimizado, <strong>todos los planes son deficitarios</strong> con uso real. Con Groq + GPT-4o-mini, el plan Pro tiene 57% de margen y el Business 68%. La migracion no es una mejora — es una <strong>necesidad de supervivencia del negocio</strong>.
+    </div>
+  </div>
+
+  <!-- 6. Desglose técnico -->
+  <div class="section page-break">
+    <div class="section-title"><span class="num">6</span> Desglose Tecnico: Por Que Funciona</div>
+
+    <table>
+      <thead>
+        <tr><th>Aspecto</th><th>Pipeline Actual</th><th>Pipeline Optimizado</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Transcripcion (STT)</strong></td>
+          <td>OpenAI Realtime API<br>$0.06/min por stream<br>Modelo propietario</td>
+          <td>Groq Whisper large-v3-turbo<br>$0.006/min por request<br>Modelo open-source en hardware LPU</td>
+        </tr>
+        <tr>
+          <td><strong>Respuestas (LLM)</strong></td>
+          <td>Incluido en Realtime API<br>gpt-4o (modelo grande)<br>$0.06/min adicional</td>
+          <td>OpenAI Chat Completions<br>gpt-4o-mini (modelo eficiente)<br>$0.001/min</td>
+        </tr>
+        <tr>
+          <td><strong>Deteccion de voz (VAD)</strong></td>
+          <td>Server-side (OpenAI)<br>Incluido en el costo</td>
+          <td>Local (en la app)<br>Sin costo adicional</td>
+        </tr>
+        <tr>
+          <td><strong>Conexion</strong></td>
+          <td>2 WebSockets persistentes<br>Facturan por segundo conectado</td>
+          <td>HTTP requests on-demand<br>Solo pagan por uso real</td>
+        </tr>
+        <tr>
+          <td><strong>Control</strong></td>
+          <td>Caja negra — OpenAI controla todo</td>
+          <td>Modular — podemos cambiar STT, LLM o VAD independientemente</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <!-- 7. Plan de migración -->
+  <div class="section">
+    <div class="section-title"><span class="num">7</span> Plan de Migracion</div>
+
+    <div class="phase-grid">
+      <div class="phase-card active">
+        <div class="phase-label active">FASE 1 — COMPLETADA</div>
+        <div class="phase-title">Audio sistema con Groq</div>
+        <div class="phase-detail">
+          Transcripcion del audio del sistema usa Groq Whisper.<br>
+          Respuestas generadas por GPT-4o-mini via Chat Completions.<br>
+          VAD local con AudioVadBuffer.<br>
+          <strong>Resultado:</strong> Sistema ya no usa Realtime API.
+        </div>
+      </div>
+      <div class="phase-card next">
+        <div class="phase-label next">FASE 2 — PENDIENTE</div>
+        <div class="phase-title">Microfono con Groq</div>
+        <div class="phase-detail">
+          Migrar transcripcion del mic a Groq Whisper.<br>
+          Agregar segunda instancia de VAD local para mic.<br>
+          Eliminar dependencia de OpenAI Realtime API al 100%.<br>
+          <strong>Resultado:</strong> Cero WebSockets, cero costos Realtime.
+        </div>
+      </div>
+      <div class="phase-card">
+        <div class="phase-label" style="color:#94a3b8">FASE 3 — FUTURO</div>
+        <div class="phase-title">Optimizacion adicional</div>
+        <div class="phase-detail">
+          Evaluar Deepgram como alternativa a Groq para STT.<br>
+          Cache de respuestas para preguntas frecuentes.<br>
+          Batch processing para reducir llamadas API.
+        </div>
+      </div>
+      <div class="phase-card">
+        <div class="phase-label" style="color:#94a3b8">FASE 4 — FUTURO</div>
+        <div class="phase-title">Independencia total</div>
+        <div class="phase-detail">
+          Evaluar modelos open-source locales (Llama, Qwen) para respuestas.<br>
+          Self-hosted Whisper para eliminar costo de STT.<br>
+          Costo por minuto cercano a $0.001 (solo infra).
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- 8. Escenarios de ingresos -->
+  <div class="section">
+    <div class="section-title"><span class="num">8</span> Escenarios de Ingresos con Pipeline Optimizado</div>
+
+    <table>
+      <thead>
+        <tr><th>Escenario</th><th style="text-align:right">Usuarios Free</th><th style="text-align:right">Usuarios Pro</th><th style="text-align:right">Usuarios Business</th><th style="text-align:right">MRR</th><th style="text-align:right">Costos API</th><th style="text-align:right">Margen</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Conservador</td>
+          <td style="text-align:right">200</td>
+          <td style="text-align:right">30</td>
+          <td style="text-align:right">5</td>
+          <td style="text-align:right">$1,265</td>
+          <td style="text-align:right">$~540</td>
+          <td style="text-align:right"><strong>$725 (57%)</strong></td>
+        </tr>
+        <tr>
+          <td>Moderado</td>
+          <td style="text-align:right">500</td>
+          <td style="text-align:right">80</td>
+          <td style="text-align:right">15</td>
+          <td style="text-align:right">$3,505</td>
+          <td style="text-align:right">$~1,380</td>
+          <td style="text-align:right"><strong>$2,125 (61%)</strong></td>
+        </tr>
+        <tr>
+          <td>Optimista</td>
+          <td style="text-align:right">1,000</td>
+          <td style="text-align:right">150</td>
+          <td style="text-align:right">30</td>
+          <td style="text-align:right">$6,720</td>
+          <td style="text-align:right">$~2,700</td>
+          <td style="text-align:right"><strong>$4,020 (60%)</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <div class="callout-green">
+      <strong>Punto de equilibrio:</strong> Con solo ~20 usuarios Pro ($580 MRR), cubrimos costos de infraestructura, APIs y operacion basica. Con el pipeline actual, necesitariamos cobrar <strong>$109/mes</strong> por usuario para no perder dinero.
+    </div>
+  </div>
+
+  <!-- Footer -->
+  <div class="doc-footer">
+    EasyCorp SRL — Analisis de costos reales vs pipeline optimizado — Basado en datos de produccion OpenAI Dashboard (22-26 Mar 2026)<br>
+    Pipeline actual: OpenAI Realtime API gpt-4o-realtime-preview | Pipeline optimizado: Groq Whisper large-v3-turbo + OpenAI GPT-4o-mini Chat Completions
+  </div>
+
+</body>
+</html>

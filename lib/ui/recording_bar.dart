@@ -12,7 +12,9 @@ import '../core/app_config.dart';
 import '../services/window_capture_utils.dart' as capture;
 import '../models/session_models.dart';
 import '../services/agent_profile_store.dart';
+import '../services/onboarding_service.dart';
 import '../services/recording_session_controller.dart';
+import 'onboarding_overlay.dart';
 import 'settings_panel.dart';
 
 class RecordingBarApp extends StatelessWidget {
@@ -57,6 +59,15 @@ class _RecordingBarState extends State<RecordingBar> {
   bool _suggestionsSidebarOpen = true;
   bool _invisibleMode = false;
   bool _settingsPanelOpen = false;
+  bool _showOnboarding = false;
+
+  // ── Onboarding keys ──
+  final _keyPlayStop = GlobalKey();
+  final _keySuggestions = GlobalKey();
+  final _keyTranscript = GlobalKey();
+  final _keyFreestyle = GlobalKey();
+  final _keyInvisible = GlobalKey();
+  final _keyChatInput = GlobalKey();
 
   // ── Scroll / input controllers ─────────────────────────────────────────────
   final ScrollController _chatScrollController = ScrollController();
@@ -137,6 +148,7 @@ class _RecordingBarState extends State<RecordingBar> {
 
     _loadActiveAgent();
     _notifyBarOpened();
+    _checkOnboarding();
 
     DesktopMultiWindow.setMethodHandler((call, fromWindowId) async {
       if (call.method == 'updatePrompt') {
@@ -231,6 +243,53 @@ class _RecordingBarState extends State<RecordingBar> {
     setState(() => _settingsPanelOpen = !_settingsPanelOpen);
   }
 
+  Future<void> _checkOnboarding() async {
+    final completed = await OnboardingService.instance.isCompleted('recording');
+    if (!completed && mounted) {
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (mounted) setState(() => _showOnboarding = true);
+    }
+  }
+
+  void _endOnboarding() {
+    OnboardingService.instance.markCompleted('recording');
+    if (mounted) setState(() => _showOnboarding = false);
+  }
+
+  List<OnboardingStep> _buildOnboardingSteps() => [
+        OnboardingStep(
+          key: _keyPlayStop,
+          title: 'Iniciar / Detener',
+          description: 'Presiona para iniciar la escucha. La IA comenzará a transcribir y generar respuestas en tiempo real.',
+        ),
+        OnboardingStep(
+          key: _keySuggestions,
+          title: 'Sugerencias',
+          description: 'Muestra u oculta el panel de preguntas sugeridas que la IA genera basándose en la conversación.',
+        ),
+        OnboardingStep(
+          key: _keyTranscript,
+          title: 'Transcripción',
+          description: 'Cambia a la vista de transcripción para ver todo lo que se ha dicho en la conversación.',
+        ),
+        OnboardingStep(
+          key: _keyFreestyle,
+          title: 'Modo libre',
+          description: 'Activa respuestas sin limitarse al documento. La IA puede usar su conocimiento general para ayudarte.',
+        ),
+        OnboardingStep(
+          key: _keyInvisible,
+          title: 'Modo invisible',
+          description: 'Oculta la app de capturas de pantalla y transmisiones (Zoom, Meet, Discord, OBS).',
+        ),
+        OnboardingStep(
+          key: _keyChatInput,
+          title: 'Chat manual',
+          description: 'Escribe preguntas directas a la IA. Funciona aunque no estés grabando audio.',
+          position: OnboardingPosition.top,
+        ),
+      ];
+
   void _showStereoMixGuide() {
     if (!mounted) return;
     showDialog(
@@ -290,7 +349,9 @@ class _RecordingBarState extends State<RecordingBar> {
       );
     }
 
-    return Scaffold(
+    return Stack(
+      children: [
+        Scaffold(
       backgroundColor: Colors.transparent,
       body: SizedBox.expand(
         child: GestureDetector(
@@ -362,10 +423,13 @@ class _RecordingBarState extends State<RecordingBar> {
                           children: [
                             Row(
                               children: [
-                                navIconButton(
-                                  Icons.play_arrow_rounded,
-                                  'Iniciar',
-                                  _controller.listening ? null : _startListening,
+                                Container(
+                                  key: _keyPlayStop,
+                                  child: navIconButton(
+                                    Icons.play_arrow_rounded,
+                                    'Iniciar',
+                                    _controller.listening ? null : _startListening,
+                                  ),
                                 ),
                                 const SizedBox(width: 8),
                                 navIconButton(
@@ -378,6 +442,15 @@ class _RecordingBarState extends State<RecordingBar> {
                                   Icons.settings_rounded,
                                   'Configurar',
                                   _toggleSettings,
+                                ),
+                                const SizedBox(width: 8),
+                                navIconButton(
+                                  Icons.help_outline_rounded,
+                                  'Tutorial',
+                                  () {
+                                    OnboardingService.instance.reset('recording');
+                                    setState(() => _showOnboarding = true);
+                                  },
                                 ),
                               ],
                             ),
@@ -458,44 +531,56 @@ class _RecordingBarState extends State<RecordingBar> {
                             child: ListView(
                               scrollDirection: Axis.horizontal,
                               children: [
-                                _QuickChip(
-                                  label: _suggestionsSidebarOpen
-                                      ? 'Ocultar sugerencias'
-                                      : 'Mostrar sugerencias',
-                                  icon: Icons.lightbulb_outline_rounded,
-                                  onTap: _toggleSuggestions,
+                                Container(
+                                  key: _keySuggestions,
+                                  child: _QuickChip(
+                                    label: _suggestionsSidebarOpen
+                                        ? 'Ocultar sugerencias'
+                                        : 'Mostrar sugerencias',
+                                    icon: Icons.lightbulb_outline_rounded,
+                                    onTap: _toggleSuggestions,
+                                  ),
                                 ),
-                                _QuickChip(
-                                  label: _showTranscript
-                                      ? 'Volver'
-                                      : 'Transcripcion',
-                                  icon: Icons.mic_rounded,
-                                  onTap: _toggleTranscript,
+                                Container(
+                                  key: _keyTranscript,
+                                  child: _QuickChip(
+                                    label: _showTranscript
+                                        ? 'Volver'
+                                        : 'Transcripcion',
+                                    icon: Icons.mic_rounded,
+                                    onTap: _toggleTranscript,
+                                  ),
                                 ),
-                                _QuickChip(
-                                  label: _controller.freestyleMode
-                                      ? 'Modo libre ON'
-                                      : 'Modo libre',
-                                  icon: Icons.auto_fix_high_rounded,
-                                  onTap: _controller.toggleFreestyleMode,
-                                  activeColor: const Color(0xFFE53935),
-                                  isActive: _controller.freestyleMode,
+                                Container(
+                                  key: _keyFreestyle,
+                                  child: _QuickChip(
+                                    label: _controller.freestyleMode
+                                        ? 'Modo libre ON'
+                                        : 'Modo libre',
+                                    icon: Icons.auto_fix_high_rounded,
+                                    onTap: _controller.toggleFreestyleMode,
+                                    activeColor: const Color(0xFFE53935),
+                                    isActive: _controller.freestyleMode,
+                                  ),
                                 ),
-                                _QuickChip(
-                                  label: _invisibleMode
-                                      ? 'Visible'
-                                      : 'Invisible',
-                                  icon: _invisibleMode
-                                      ? Icons.visibility_off_rounded
-                                      : Icons.visibility_rounded,
+                                Container(
+                                  key: _keyInvisible,
+                                  child: _QuickChip(
+                                    label: _invisibleMode
+                                        ? 'Visible'
+                                        : 'Invisible',
+                                    icon: _invisibleMode
+                                        ? Icons.visibility_off_rounded
+                                        : Icons.visibility_rounded,
                                   onTap: () {
                                     setState(() {
                                       _invisibleMode = !_invisibleMode;
                                     });
                                     capture.setInvisibleMode(_invisibleMode);
                                   },
-                                  activeColor: const Color(0xFF5CB2FF),
-                                  isActive: _invisibleMode,
+                                    activeColor: const Color(0xFF5CB2FF),
+                                    isActive: _invisibleMode,
+                                  ),
                                 ),
                                 _QuickChip(
                                   label: _showDebugLogs ? 'Ocultar logs' : 'Logs',
@@ -514,6 +599,7 @@ class _RecordingBarState extends State<RecordingBar> {
                         ],
                         const SizedBox(height: 8),
                         Container(
+                          key: _keyChatInput,
                           constraints: const BoxConstraints(minHeight: 34),
                           decoration: BoxDecoration(
                             color: colorScheme.surfaceVariant.withOpacity(0.58),
@@ -626,6 +712,13 @@ class _RecordingBarState extends State<RecordingBar> {
           ),
         ),
       ),
+    ),
+        if (_showOnboarding)
+          OnboardingOverlay(
+            steps: _buildOnboardingSteps(),
+            onComplete: _endOnboarding,
+          ),
+      ],
     );
   }
 }

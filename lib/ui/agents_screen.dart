@@ -3,7 +3,9 @@ import 'package:flutter/material.dart';
 
 import '../models/agent_profile.dart';
 import '../services/agent_profile_store.dart';
+import '../services/onboarding_service.dart';
 import 'loading_overlay.dart';
+import 'onboarding_overlay.dart';
 
 const List<String> _communicationStyles = [
   'formal',
@@ -24,12 +26,44 @@ class _AgentsScreenState extends State<AgentsScreen> {
   bool _loading = true;
   bool _hasChanges = false;
   String? _switchingAgent;
+  bool _showOnboarding = false;
+
+  final _keyAddAgent = GlobalKey();
+  final _keyFirstAgent = GlobalKey();
 
   @override
   void initState() {
     super.initState();
     _loadConfig();
+    _checkOnboarding();
   }
+
+  Future<void> _checkOnboarding() async {
+    final completed = await OnboardingService.instance.isCompleted('agents');
+    if (!completed && mounted) {
+      await Future.delayed(const Duration(milliseconds: 800));
+      if (mounted) setState(() => _showOnboarding = true);
+    }
+  }
+
+  void _endOnboarding() {
+    OnboardingService.instance.markCompleted('agents');
+    if (mounted) setState(() => _showOnboarding = false);
+  }
+
+  List<OnboardingStep> _buildOnboardingSteps() => [
+        OnboardingStep(
+          key: _keyFirstAgent,
+          title: 'Tus agentes',
+          description: 'Toca cualquier agente para seleccionarlo. Cada uno tiene su personalidad, estilo y documentos.',
+        ),
+        OnboardingStep(
+          key: _keyAddAgent,
+          title: 'Crear agente',
+          description: 'Crea un nuevo agente con instrucciones personalizadas y sube documentos para que la IA los use como referencia.',
+          position: OnboardingPosition.left,
+        ),
+      ];
 
   Future<void> _loadConfig() async {
     final config = await AgentProfileStore.instance.loadConfig();
@@ -501,7 +535,17 @@ class _AgentsScreenState extends State<AgentsScreen> {
                       ),
                     ),
                     const Spacer(),
+                    IconButton(
+                      onPressed: () {
+                        OnboardingService.instance.reset('agents');
+                        setState(() => _showOnboarding = true);
+                      },
+                      icon: const Icon(Icons.help_outline_rounded),
+                      tooltip: 'Tutorial',
+                    ),
+                    const SizedBox(width: 8),
                     ElevatedButton.icon(
+                      key: _keyAddAgent,
                       onPressed: _createAgent,
                       icon: const Icon(Icons.add_circle_outline_rounded),
                       label: const Text('Anadir agente'),
@@ -535,12 +579,15 @@ class _AgentsScreenState extends State<AgentsScreen> {
                             spacing: 20,
                             runSpacing: 20,
                             children: [
-                              for (final agent in config?.agents ?? const [])
-                                _AgentCard(
-                                  profile: agent,
-                                  isActive: config?.activeAgentId == agent.id,
-                                  onSelect: () => _selectAgent(agent),
-                                  onQuickEdit: () => _quickEditAgent(agent),
+                              for (var i = 0; i < (config?.agents.length ?? 0); i++)
+                                Container(
+                                  key: i == 0 ? _keyFirstAgent : null,
+                                  child: _AgentCard(
+                                    profile: config!.agents[i],
+                                    isActive: config.activeAgentId == config.agents[i].id,
+                                    onSelect: () => _selectAgent(config.agents[i]),
+                                    onQuickEdit: () => _quickEditAgent(config.agents[i]),
+                                  ),
                                 ),
                             ],
                           ),
@@ -554,6 +601,11 @@ class _AgentsScreenState extends State<AgentsScreen> {
     ), // end Scaffold
         if (_switchingAgent != null)
           LoadingOverlay(message: 'Cambiando a $_switchingAgent...'),
+        if (_showOnboarding)
+          OnboardingOverlay(
+            steps: _buildOnboardingSteps(),
+            onComplete: _endOnboarding,
+          ),
       ],
     );
   }
