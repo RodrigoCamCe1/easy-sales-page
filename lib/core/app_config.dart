@@ -5,7 +5,7 @@ import 'package:path/path.dart' as p;
 
 import '../services/audio_preferences_store.dart';
 
-const String appVersion = '1.4.9';
+const String appVersion = '1.5.0';
 const String githubRepo = 'RodrigoCamCe1/easy-sales-page';
 const double barHeight = 280.0;
 const String dartDefineOpenAIKey = String.fromEnvironment('OPENAI_API_KEY');

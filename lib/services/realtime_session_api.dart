@@ -53,4 +53,34 @@ class RealtimeSessionApi {
       return null;
     }
   }
+
+  /// Fetches the Groq API key from the backend.
+  Future<String?> fetchGroqKey({required String accessToken}) async {
+    final token = accessToken.trim();
+    if (token.isEmpty) return null;
+
+    try {
+      final uri = Uri.parse(_baseUrl).resolve('/api/realtime/groq-key');
+      final request = await _httpClient.openUrl('GET', uri);
+      request.headers.set(HttpHeaders.acceptHeader, 'application/json');
+      request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
+
+      final response = await request.close();
+      final raw = await utf8.decodeStream(response);
+
+      if (response.statusCode < 200 || response.statusCode >= 300) {
+        debugPrint('[RealtimeSessionApi] groq-key error (${response.statusCode}): $raw');
+        return null;
+      }
+
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return null;
+
+      final apiKey = decoded['apiKey'];
+      return apiKey is String && apiKey.isNotEmpty ? apiKey : null;
+    } catch (e) {
+      debugPrint('[RealtimeSessionApi] fetchGroqKey error: $e');
+      return null;
+    }
+  }
 }

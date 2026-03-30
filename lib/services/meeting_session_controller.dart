@@ -11,10 +11,12 @@ import '../core/app_config.dart';
 import '../models/conversation.dart';
 import '../models/session_models.dart';
 import 'audio_device_utils.dart';
+import 'audio_vad_buffer.dart';
 import 'auth_session_manager.dart';
 import 'backend_data_api.dart';
+import 'chat_completion_client.dart';
 import 'conversation_store.dart';
-import 'openai_realtime_client.dart';
+import 'groq_transcription_client.dart';
 import 'realtime_session_api.dart';
 import 'store_helpers.dart';
 
@@ -86,9 +88,11 @@ class MeetingSessionController extends ChangeNotifier {
   DateTime? _sessionEndedAt;
 
   String _ragContext = '';
-  String _lastResolvedToken = '';
 
-  OpenAIRealtimeClient? _openAIClient;
+  GroqTranscriptionClient? _groqClient;
+  ChatCompletionClient? _chatClient;
+  ChatCompletionClient? _suggestionsClient;
+  AudioVadBuffer? _micVadBuffer;
   Process? _audioProcess;
   StreamSubscription<List<int>>? _audioSubscription;
 
@@ -138,29 +142,39 @@ class MeetingSessionController extends ChangeNotifier {
   // ────────────────────────────────────────────────────────────────────────
 
   void applyUpdatedPrompt() {
-    _openAIClient?.updateSessionInstructions(_buildSessionInstructions());
+    _chatClient?.updateSystemPrompt(_buildChatOnlyPrompt());
+    _suggestionsClient?.updateSystemPrompt(_buildSuggestionsOnlyPrompt());
   }
 
   /// Entry point from FlutterAudioCapture (non-Windows platforms).
   void appendMicAudioFromPlatform(List<double> floatData) {
     final bytes = _floatTo16(floatData);
     _pendingMicBytes += bytes.length;
-    _openAIClient?.appendAudio(bytes);
+    _micVadBuffer?.addAudio(bytes);
     _logAudioLevel(bytes, label: 'mic');
   }
 
   Future<void> startListening() async {
     if (_listening) return;
 
-    final token = await _resolveOpenAIToken();
-    if (token.isEmpty) {
-      _statusMessage = 'No se pudo obtener credenciales de OpenAI.';
+    // Resolve Groq key from backend
+    String resolvedGroqKey = groqApiKey;
+    if (resolvedGroqKey.isEmpty) {
+      final accessToken = AuthSessionManager.instance.accessToken?.trim() ?? '';
+      if (accessToken.isNotEmpty) {
+        resolvedGroqKey = await RealtimeSessionApi().fetchGroqKey(accessToken: accessToken) ?? '';
+      }
+    }
+    if (resolvedGroqKey.isEmpty) {
+      _statusMessage = 'No se pudo obtener credenciales de Groq.';
       _safeNotify();
       return;
     }
 
-    await _openAIClient?.close();
-    _openAIClient = null;
+    _groqClient?.close();
+    _chatClient?.close();
+    _suggestionsClient?.close();
+    _micVadBuffer?.dispose();
 
     _uiTranscriptIdleTimer?.cancel();
     _queuedResponseDelayTimer?.cancel();
@@ -189,9 +203,9 @@ class MeetingSessionController extends ChangeNotifier {
     _lastLine = null;
     _wordsAccum = 0;
     _wordsAtLastResponse = 0;
-    _statusMessage = 'Conectando con OpenAI';
+    _statusMessage = 'Conectando...';
 
-    _addLog('🟢 Modo Reunión: conectando con OpenAI...');
+    _addLog('🟢 Modo Reunión: pipeline Groq (sin OpenAI)');
 
     // RAG context
     _ragContext = '';
@@ -203,33 +217,34 @@ class MeetingSessionController extends ChangeNotifier {
       }
     }
 
-    // Single client: transcribes AND generates responses
-    _openAIClient = OpenAIRealtimeClient(
-      openAIKey: token,
-      model: openAIRealtimeModel,
-      vadSilenceMs: vadSilenceMs,
-      sessionInstructions: _buildSessionInstructions(),
-      onDelta: _appendResponseDelta,
-      onTranscriptDelta: _appendTranscriptDelta,
-      onComplete: () {
-        _appendTranscriptDelta('\n');
-        _handleResponseComplete();
-      },
+    // Groq clients
+    _groqClient = GroqTranscriptionClient(
+      apiKey: resolvedGroqKey,
+      model: groqModel,
+      language: 'es',
       onLog: _addLog,
-      showEvents: showOpenAIEvents,
-      sourceTag: 'meeting',
     );
 
-    try {
-      await _openAIClient?.connect();
-    } catch (error) {
-      _listening = false;
-      _statusMessage = 'No se pudo conectar con OpenAI: $error';
-      _safeNotify();
-      _timer?.cancel();
-      _elapsed = Duration.zero;
-      return;
-    }
+    _chatClient = ChatCompletionClient(
+      apiKey: resolvedGroqKey,
+      onLog: _addLog,
+    );
+    _chatClient!.setSystemPrompt(_buildChatOnlyPrompt());
+
+    _suggestionsClient = ChatCompletionClient(
+      apiKey: resolvedGroqKey,
+      onLog: _addLog,
+    );
+    _suggestionsClient!.setSystemPrompt(_buildSuggestionsOnlyPrompt());
+
+    // VAD for mic → transcription + responses
+    _micVadBuffer = AudioVadBuffer(
+      silenceThresholdDb: -55.0,
+      silenceDurationMs: 1500,
+      minSpeechDurationMs: 500,
+      maxBufferDurationMs: 20000,
+      onSpeechComplete: _onGroqSpeechComplete,
+    )..onLog = _addLog;
 
     _listening = true;
     _statusMessage = 'Modo Reunión activo. Escuchando...';
@@ -241,12 +256,6 @@ class MeetingSessionController extends ChangeNotifier {
     } else {
       onRequestStartPlatformCapture?.call();
     }
-
-    _realtimeTimer?.cancel();
-    _realtimeTimer = Timer.periodic(
-      Duration(seconds: realtimeFlushSeconds),
-      (_) => _maybeCommit(),
-    );
   }
 
   Future<void> stopListening() async {
@@ -267,54 +276,140 @@ class MeetingSessionController extends ChangeNotifier {
       onRequestStopPlatformCapture?.call();
     }
 
-    if (_pendingMicBytes > 0) {
-      final committed = await _openAIClient?.commitBuffer() ?? false;
-      if (committed) _pendingMicBytes = 0;
-    }
+    _micVadBuffer?.forceFlush();
 
     _listening = false;
     _elapsed = Duration.zero;
-    _statusMessage = 'Procesando respuesta';
+    _statusMessage = 'Sesión finalizada';
     _safeNotify();
 
-    if (!_responseInFlight && !_finalResponseQueued) {
-      await _openAIClient?.close();
-      _openAIClient = null;
-      await _maybeSaveConversation();
+    _groqClient?.close();
+    _groqClient = null;
+    _chatClient?.close();
+    _chatClient = null;
+    _suggestionsClient?.close();
+    _suggestionsClient = null;
+    _micVadBuffer?.dispose();
+    _micVadBuffer = null;
+    await _maybeSaveConversation();
+  }
+
+  /// Called by VAD when mic speech ends — transcribe + generate response.
+  void _onGroqSpeechComplete(Uint8List pcmBytes) async {
+    if (_disposed) return;
+
+    final groq = _groqClient;
+    final chat = _chatClient;
+    if (groq == null || chat == null) return;
+
+    _scheduleSilenceAutoStop();
+
+    final transcript = await groq.transcribe(pcmBytes);
+    if (transcript == null || transcript.trim().isEmpty) return;
+
+    // Show transcription
+    _appendTranscriptDelta(transcript);
+    _appendTranscriptDelta('\n');
+
+    // Build context
+    final recentTranscripts = <String>[];
+    for (final t in _transcriptLines) {
+      final trimmed = t.trim();
+      if (trimmed.isNotEmpty) recentTranscripts.add(trimmed);
+    }
+    final contextLines = recentTranscripts.length > 10
+        ? recentTranscripts.sublist(recentTranscripts.length - 10)
+        : recentTranscripts;
+
+    final buf = StringBuffer();
+    if (_ragContext.isNotEmpty) {
+      buf.writeln('CONTEXTO DE DOCUMENTOS:');
+      buf.writeln(_ragContext);
+      buf.writeln();
+    }
+    if (contextLines.isNotEmpty) {
+      buf.writeln('CONVERSACIÓN RECIENTE:');
+      buf.writeln(contextLines.join('\n'));
+      buf.writeln();
+    }
+    buf.writeln('ÚLTIMO FRAGMENTO (responde a esto):');
+    buf.writeln(transcript);
+    final userMessage = buf.toString();
+
+    // Generate response + suggestions in parallel
+    _currentResponse = '';
+    _responseInFlight = true;
+    _assistantTurnSeq += 1;
+    _activeAssistantTurnId = _assistantTurnSeq;
+    _safeNotify();
+
+    final sugClient = _suggestionsClient;
+
+    final chatFuture = chat.sendMessage(
+      userMessage: userMessage,
+      onDelta: (delta) {
+        _appendResponseDelta(delta);
+      },
+      onComplete: () {
+        _handleResponseComplete();
+      },
+    );
+
+    final suggestionsFuture = sugClient != null
+        ? sugClient.sendMessage(
+            userMessage: userMessage,
+            onDelta: (_) {},
+            onComplete: () {},
+          )
+        : Future.value('');
+
+    final results = await Future.wait([chatFuture, suggestionsFuture]);
+
+    final suggestionsText = results[1];
+    if (suggestionsText.isNotEmpty) {
+      final lines = suggestionsText.split('\n');
+      _suggestions.clear();
+      for (final line in lines) {
+        final t = line.trim();
+        if (t.isEmpty) continue;
+        final colonIdx = t.indexOf(':');
+        if (colonIdx >= 0 && colonIdx < t.length - 1) {
+          _suggestions.add(t.substring(colonIdx + 1).trim());
+        } else {
+          _suggestions.add(t);
+        }
+      }
+      _safeNotify();
     }
   }
 
   Future<void> sendManualPrompt(String prompt) async {
     if (prompt.isEmpty) return;
 
-    final resolvedKey = await _resolveOpenAIToken();
-    if (resolvedKey.isEmpty) {
-      _statusMessage = 'No se pudo obtener credenciales de OpenAI.';
-      _safeNotify();
-      return;
+    // Resolve Groq key if needed
+    if (_chatClient == null) {
+      String resolvedGroqKey = groqApiKey;
+      if (resolvedGroqKey.isEmpty) {
+        final accessToken = AuthSessionManager.instance.accessToken?.trim() ?? '';
+        if (accessToken.isNotEmpty) {
+          resolvedGroqKey = await RealtimeSessionApi().fetchGroqKey(accessToken: accessToken) ?? '';
+        }
+      }
+      if (resolvedGroqKey.isEmpty) {
+        _statusMessage = 'No se pudo obtener credenciales de Groq.';
+        _safeNotify();
+        return;
+      }
+      _chatClient = ChatCompletionClient(
+        apiKey: resolvedGroqKey,
+        onLog: _addLog,
+      );
+      _chatClient!.setSystemPrompt(_buildChatOnlyPrompt());
     }
 
     _chatResponses.add(ChatMessage(role: 'user', text: prompt));
     _safeNotify();
     onScrollChatToBottom?.call();
-
-    if (_openAIClient == null) {
-      _openAIClient = OpenAIRealtimeClient(
-        openAIKey: resolvedKey,
-        model: openAIRealtimeModel,
-        vadSilenceMs: vadSilenceMs,
-        sessionInstructions: _buildSessionInstructions(),
-        onDelta: _appendResponseDelta,
-        onTranscriptDelta: _appendTranscriptDelta,
-        onComplete: () {
-          _appendTranscriptDelta('\n');
-          _handleResponseComplete();
-        },
-        showEvents: showOpenAIEvents,
-        sourceTag: 'meeting',
-      );
-      await _openAIClient?.connect();
-    }
 
     _sessionStartedAt ??= DateTime.now();
     _sessionEndedAt = DateTime.now();
@@ -325,15 +420,21 @@ class MeetingSessionController extends ChangeNotifier {
     _activeAssistantTurnId = _assistantTurnSeq;
     _safeNotify();
 
-    _appendTranscriptDelta('\n');
-
     final ctx = _buildRecentContext();
-    final manualInstructions = [
+    final userMessage = [
       'Mensaje del usuario (prioritario para este turno):\n$prompt',
       if (ctx.isNotEmpty) ctx,
     ].join('\n\n');
 
-    await _openAIClient?.requestResponse(instructions: manualInstructions);
+    await _chatClient!.sendMessage(
+      userMessage: userMessage,
+      onDelta: (delta) {
+        _appendResponseDelta(delta);
+      },
+      onComplete: () {
+        _handleResponseComplete();
+      },
+    );
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -580,8 +681,9 @@ class MeetingSessionController extends ChangeNotifier {
     }
 
     if (!_listening) {
-      _openAIClient?.close();
-      _openAIClient = null;
+      _groqClient?.close();
+      _chatClient?.close();
+      _suggestionsClient?.close();
       unawaited(_maybeSaveConversation());
     }
   }
@@ -628,26 +730,13 @@ class MeetingSessionController extends ChangeNotifier {
   }
 
   void _startVoiceTriggeredResponse() {
-    if (_openAIClient == null) return;
-
-    _responseInFlight = true;
-    _statusMessage = 'Procesando respuesta';
-    _assistantTurnSeq += 1;
-    _activeAssistantTurnId = _assistantTurnSeq;
-    _safeNotify();
-
-    unawaited(_requestResponse());
+    // With Groq pipeline, responses are triggered from _onGroqSpeechComplete
+    return;
   }
 
   Future<void> _requestResponse() async {
     try {
-      if (_pendingMicBytes > 0) {
-        final committed = await _openAIClient?.commitBuffer() ?? false;
-        if (committed) _pendingMicBytes = 0;
-      }
-      await _openAIClient?.requestResponse(
-        instructions: _buildRecentContext(),
-      );
+      // No-op: Groq pipeline handles responses via _onGroqSpeechComplete
     } catch (error) {
       if (_disposed) return;
       _responseInFlight = false;
@@ -701,7 +790,7 @@ class MeetingSessionController extends ChangeNotifier {
         (chunk) {
           final bytes = Uint8List.fromList(chunk);
           _pendingMicBytes += bytes.length;
-          _openAIClient?.appendAudio(bytes);
+          _micVadBuffer?.addAudio(bytes);
           _logAudioLevel(bytes, label: 'mic');
         },
         onDone: () => _addLog('🔴 Captura de micrófono finalizada'),
@@ -741,17 +830,6 @@ class MeetingSessionController extends ChangeNotifier {
     }
   }
 
-  // ────────────────────────────────────────────────────────────────────────
-  // AUDIO HELPERS
-  // ────────────────────────────────────────────────────────────────────────
-
-  Future<void> _maybeCommit() async {
-    if (!_listening || _openAIClient == null) return;
-    if (_pendingMicBytes < 7200) return;
-    final committed = await _openAIClient?.commitBuffer() ?? false;
-    if (committed) _pendingMicBytes = 0;
-  }
-
   void _scheduleSilenceAutoStop() {
     _silenceAutoStopTimer?.cancel();
     if (!_listening) return;
@@ -761,24 +839,6 @@ class MeetingSessionController extends ChangeNotifier {
       _safeNotify();
       unawaited(stopListening());
     });
-  }
-
-  // ────────────────────────────────────────────────────────────────────────
-  // TOKEN
-  // ────────────────────────────────────────────────────────────────────────
-
-  Future<String> _resolveOpenAIToken() async {
-    final accessToken = AuthSessionManager.instance.accessToken?.trim() ?? '';
-    if (accessToken.isNotEmpty) {
-      final ephemeral =
-          await RealtimeSessionApi().createSession(accessToken: accessToken);
-      if (ephemeral != null && ephemeral.isNotEmpty) {
-        _lastResolvedToken = ephemeral;
-        return ephemeral;
-      }
-    }
-    if (_lastResolvedToken.isNotEmpty) return _lastResolvedToken;
-    return openAIKey;
   }
 
   // ────────────────────────────────────────────────────────────────────────
@@ -814,37 +874,43 @@ class MeetingSessionController extends ChangeNotifier {
     }
   }
 
-  String _buildSessionInstructions() {
+  String _buildChatOnlyPrompt() {
     final buf = StringBuffer();
-    buf.writeln('MODO REUNIÓN PRESENCIAL: Estás escuchando una reunión a través del micrófono del dispositivo. Escucharás a todas las personas presentes. Tu rol es asesorar al vendedor/usuario en tiempo real.');
+    buf.writeln('MODO REUNIÓN PRESENCIAL: Estás escuchando una reunión a través del micrófono. Escucharás a todas las personas presentes. Tu rol es asesorar al usuario en tiempo real.');
     buf.writeln();
     if (promptOverride.trim().isNotEmpty) {
       buf.writeln(promptOverride.trim());
-      buf.writeln();
-    }
-    if (_ragContext.trim().isNotEmpty) {
-      buf.writeln(_ragContext.trim());
       buf.writeln();
     }
     if (freestyleMode) {
       buf.writeln('MODO LIBRE ACTIVADO: Puedes responder usando tu conocimiento general, sin limitarte al documento ni al prompt.');
       buf.writeln();
     }
-    buf.writeln('Responde siempre en español. Usa exactamente estas dos secciones:');
-    buf.writeln('CHAT:');
-    buf.writeln('[4-8 líneas directas y accionables. Sin emojis ni JSON.]');
-    buf.writeln('SUGERENCIAS:');
-    buf.writeln('[Máx. 3 preguntas. Una por línea con formato: Pregunta sugerida: ...]');
+    buf.writeln('Responde de forma directa y accionable.');
+    buf.writeln('- Máximo 5 líneas.');
+    buf.writeln('- Sin emojis.');
+    buf.writeln('- Completa todas las palabras y oraciones.');
+    buf.writeln('- NO incluyas preguntas sugeridas.');
+    buf.writeln('- Responde en español.');
+    return buf.toString();
+  }
+
+  String _buildSuggestionsOnlyPrompt() {
+    final buf = StringBuffer();
+    if (promptOverride.trim().isNotEmpty) {
+      buf.writeln(promptOverride.trim());
+      buf.writeln();
+    }
+    buf.writeln('Tu ÚNICA tarea es generar 3 preguntas relevantes que el usuario podría hacer basándose en la conversación.');
+    buf.writeln('- Responde SOLO con 3 preguntas, una por línea.');
+    buf.writeln('- Cada línea debe empezar con "Pregunta sugerida:"');
+    buf.writeln('- No incluyas explicaciones ni texto adicional.');
+    buf.writeln('- Responde en español.');
     return buf.toString();
   }
 
   String _buildRecentContext({int maxLines = 5}) {
     final buf = StringBuffer();
-    final sessionInstr = _buildSessionInstructions().trim();
-    if (sessionInstr.isNotEmpty) {
-      buf.writeln(sessionInstr);
-      buf.writeln();
-    }
     if (_transcriptLines.isNotEmpty) {
       final recent = _transcriptLines.length > maxLines
           ? _transcriptLines.sublist(_transcriptLines.length - maxLines)
@@ -1172,7 +1238,10 @@ class MeetingSessionController extends ChangeNotifier {
     onRequestStopPlatformCapture?.call();
     _audioSubscription?.cancel();
     _audioProcess?.kill();
-    _openAIClient?.close();
+    _groqClient?.close();
+    _chatClient?.close();
+    _suggestionsClient?.close();
+    _micVadBuffer?.dispose();
     super.dispose();
   }
 }
