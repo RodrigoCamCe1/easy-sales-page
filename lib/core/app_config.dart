@@ -65,3 +65,13 @@ String get groqApiKey => dotenv.env['GROQ_API_KEY'] ?? '';
 String get groqModel => dotenv.env['GROQ_MODEL'] ?? 'whisper-large-v3-turbo';
 
 String get chatCompletionModel => dotenv.env['CHAT_COMPLETION_MODEL'] ?? 'gpt-4o-mini';
+
+// ── macOS audio loopback ───────────────────────────────────────────────────
+/// AVFoundation device name for system audio loopback on macOS.
+/// Requires BlackHole (or equivalent) installed. Configure via MACOS_LOOPBACK_DEVICE in .env.
+String get macosLoopbackDevice =>
+    dotenv.env['MACOS_LOOPBACK_DEVICE'] ?? 'BlackHole 2ch';
+
+/// AVFoundation audio device index for microphone on macOS.
+/// "0" = first audio device (usually built-in mic). Configure via MACOS_MIC_DEVICE in .env.
+String get macosMicDevice => dotenv.env['MACOS_MIC_DEVICE'] ?? '0';

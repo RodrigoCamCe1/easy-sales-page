@@ -28,5 +28,7 @@
 	<string>MainMenu</string>
 	<key>NSPrincipalClass</key>
 	<string>NSApplication</string>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>EasyExpert necesita acceso al micrófono para transcribir audio en tiempo real.</string>
 </dict>
 </plist>

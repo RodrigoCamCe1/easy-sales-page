@@ -253,6 +253,8 @@ class MeetingSessionController extends ChangeNotifier {
 
     if (Platform.isWindows) {
       await _startWindowsMicCapture();
+    } else if (Platform.isMacOS) {
+      await _startMacOSMicCapture();
     } else {
       onRequestStartPlatformCapture?.call();
     }
@@ -272,6 +274,8 @@ class MeetingSessionController extends ChangeNotifier {
 
     if (Platform.isWindows) {
       await _stopWindowsMicCapture();
+    } else if (Platform.isMacOS) {
+      await _stopMacOSMicCapture();
     } else {
       onRequestStopPlatformCapture?.call();
     }
@@ -815,7 +819,8 @@ class MeetingSessionController extends ChangeNotifier {
 
   String _resolveFfmpeg() {
     final exeDir = p.dirname(Platform.resolvedExecutable);
-    final bundled = p.join(exeDir, 'ffmpeg.exe');
+    final filename = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+    final bundled = p.join(exeDir, filename);
     if (File(bundled).existsSync()) return bundled;
     return 'ffmpeg';
   }
@@ -828,6 +833,60 @@ class MeetingSessionController extends ChangeNotifier {
       await _audioProcess!.exitCode;
       _audioProcess = null;
     }
+  }
+
+  // ── macOS MIC CAPTURE (avfoundation) ──────────────────────────────────────
+
+  Future<void> _startMacOSMicCapture() async {
+    final device = macosMicDevice.trim();
+    _addLog('🎤 [macOS] Iniciando captura de micrófono (AVFoundation: :$device)...');
+    try {
+      final args = <String>[
+        '-f', 'avfoundation',
+        '-i', ':$device',
+        '-ac', '1',
+        '-ar', '24000',
+        '-f', 's16le',
+        '-',
+      ];
+      final process = await Process.start(_resolveFfmpeg(), args);
+      _audioProcess = process;
+      _audioSubscription = process.stdout.listen(
+        (chunk) {
+          _micVadBuffer?.addAudio(Uint8List.fromList(chunk));
+        },
+        onDone: () => _addLog('🔴 [macOS] Captura de micrófono finalizada'),
+        onError: (e) {
+          _statusMessage = 'Error en ffmpeg (mic macOS): $e';
+          _safeNotify();
+        },
+      );
+      process.exitCode.then((code) {
+        if (code != 0) {
+          _addLog('❌ [macOS] ffmpeg mic terminó con código $code — verifica el dispositivo con MACOS_MIC_DEVICE en .env');
+        }
+      });
+      process.stderr.transform(const Utf8Decoder()).listen((line) {
+        if (showFfmpegLogs) _addLog('⚙️ [macOS-mic] $line');
+      });
+      _addLog('✅ [macOS] Captura de micrófono iniciada');
+    } catch (e) {
+      _addLog('❌ [macOS] No se pudo iniciar captura de micrófono: $e');
+      _statusMessage = 'No se pudo iniciar ffmpeg en macOS. Asegúrate de que ffmpeg esté en PATH.';
+      _listening = false;
+      _safeNotify();
+    }
+  }
+
+  Future<void> _stopMacOSMicCapture() async {
+    await _audioSubscription?.cancel();
+    _audioSubscription = null;
+    if (_audioProcess != null) {
+      _audioProcess!.kill();
+      await _audioProcess!.exitCode;
+      _audioProcess = null;
+    }
+    _addLog('🔴 [macOS] Captura de micrófono detenida');
   }
 
   void _scheduleSilenceAutoStop() {

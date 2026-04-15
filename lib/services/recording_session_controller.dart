@@ -101,6 +101,7 @@ class RecordingSessionController extends ChangeNotifier {
 
   String _ragContext = '';
   String _lastResolvedToken = '';
+  String _resolvedGroqKey = '';
 
   OpenAIRealtimeClient? _openAIClientMic;
   OpenAIRealtimeClient? _openAIClientSystem;
@@ -136,7 +137,7 @@ class RecordingSessionController extends ChangeNotifier {
   List<String> get debugLogs => List.unmodifiable(_debugLogs);
 
   // ── Platform helpers ─────────────────────────────────────────────────────
-  bool get _systemOnlyMode => Platform.isWindows;
+  bool get _systemOnlyMode => Platform.isWindows || Platform.isMacOS;
   bool get _windowsMicAvailable =>
       Platform.isWindows && windowsMicDevice.trim().isNotEmpty;
   bool get _audioSupported =>
@@ -180,7 +181,22 @@ class RecordingSessionController extends ChangeNotifier {
     // When Groq pipeline is active, we don't need OpenAI ephemeral tokens at all.
     String micKey = '';
     String systemKey = '';
-    if (!useGroqPipeline || groqApiKey.isEmpty) {
+    if (useGroqPipeline) {
+      // Resolve Groq key: local .env first, then backend fallback
+      String resolvedGroqKey = groqApiKey;
+      if (resolvedGroqKey.isEmpty) {
+        final accessToken = AuthSessionManager.instance.accessToken?.trim() ?? '';
+        if (accessToken.isNotEmpty) {
+          resolvedGroqKey = await RealtimeSessionApi().fetchGroqKey(accessToken: accessToken) ?? '';
+        }
+      }
+      if (resolvedGroqKey.isEmpty) {
+        _statusMessage = 'No se pudo obtener la clave de Groq. Configura GROQ_API_KEY en el backend.';
+        _safeNotify();
+        return;
+      }
+      _resolvedGroqKey = resolvedGroqKey;
+    } else {
       micKey = await _resolveOpenAIToken();
       if (micKey.isEmpty) {
         _statusMessage =
@@ -255,26 +271,26 @@ class RecordingSessionController extends ChangeNotifier {
     _groqPipelineActive = false;
     final hasSystemDevice = Platform.isWindows;
 
-    if (useGroqPipeline && groqApiKey.isNotEmpty) {
+    if (useGroqPipeline && _resolvedGroqKey.isNotEmpty) {
       // ── Full Groq pipeline: mic + system via Groq Whisper + Groq Llama 3.3 ──
       _groqPipelineActive = true;
       _addLog('🔄 Pipeline completo Groq: mic y sistema sin OpenAI Realtime');
 
       _groqClient = GroqTranscriptionClient(
-        apiKey: groqApiKey,
+        apiKey: _resolvedGroqKey,
         model: groqModel,
         language: 'es',
         onLog: _addLog,
       );
 
       _chatClient = ChatCompletionClient(
-        apiKey: groqApiKey,
+        apiKey: _resolvedGroqKey,
         onLog: _addLog,
       );
       _chatClient!.setSystemPrompt(_buildChatOnlyPrompt());
 
       _suggestionsClient = ChatCompletionClient(
-        apiKey: groqApiKey,
+        apiKey: _resolvedGroqKey,
         onLog: _addLog,
       );
       _suggestionsClient!.setSystemPrompt(_buildSuggestionsOnlyPrompt());
@@ -345,7 +361,7 @@ class RecordingSessionController extends ChangeNotifier {
     }
 
     _listening = true;
-    _statusMessage = Platform.isWindows
+    _statusMessage = _systemOnlyMode
         ? (_groqPipelineActive
             ? 'Conectado (Groq + Groq Llama 3.3). Escuchando audio del sistema...'
             : 'Conectado a OpenAI. Escuchando audio del sistema...')
@@ -355,6 +371,8 @@ class RecordingSessionController extends ChangeNotifier {
 
     if (Platform.isWindows) {
       await _startWindowsCapture();
+    } else if (Platform.isMacOS) {
+      await _startMacOSCapture();
     } else if (_audioSupported) {
       onRequestStartPlatformCapture?.call();
     } else {
@@ -388,6 +406,8 @@ class RecordingSessionController extends ChangeNotifier {
 
     if (Platform.isWindows) {
       await _stopWindowsCapture();
+    } else if (Platform.isMacOS) {
+      await _stopMacOSCapture();
     } else if (_audioSupported) {
       _addLog('🔴 Deteniendo captura de audio');
       onRequestStopPlatformCapture?.call();
@@ -495,9 +515,14 @@ class RecordingSessionController extends ChangeNotifier {
             ? 'Modo fijo: chat por sistema + transcripcion sistema/microfono.'
             : 'Modo fijo: chat por sistema.';
         _safeNotify();
-        if (Platform.isWindows && _listening) {
-          await _stopWindowsCapture();
-          await _startWindowsCapture();
+        if (_listening) {
+          if (Platform.isWindows) {
+            await _stopWindowsCapture();
+            await _startWindowsCapture();
+          } else if (Platform.isMacOS) {
+            await _stopMacOSCapture();
+            await _startMacOSCapture();
+          }
         }
       }
       return;
@@ -514,9 +539,14 @@ class RecordingSessionController extends ChangeNotifier {
     micMixEnabled = enabled;
     _safeNotify();
 
-    if (Platform.isWindows && _listening) {
-      await _stopWindowsCapture();
-      await _startWindowsCapture();
+    if (_listening) {
+      if (Platform.isWindows) {
+        await _stopWindowsCapture();
+        await _startWindowsCapture();
+      } else if (Platform.isMacOS) {
+        await _stopMacOSCapture();
+        await _startMacOSCapture();
+      }
     }
   }
 
@@ -1344,9 +1374,64 @@ class RecordingSessionController extends ChangeNotifier {
   /// Returns the path to ffmpeg — bundled (next to the exe) if available, otherwise falls back to PATH.
   String _resolveFfmpeg() {
     final exeDir = p.dirname(Platform.resolvedExecutable);
-    final bundled = p.join(exeDir, 'ffmpeg.exe');
+    final filename = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
+    final bundled = p.join(exeDir, filename);
     if (File(bundled).existsSync()) return bundled;
     return 'ffmpeg';
+  }
+
+  // ── macOS SYSTEM AUDIO CAPTURE (avfoundation + BlackHole) ─────────────────
+
+  /// Starts system audio loopback capture on macOS via ffmpeg avfoundation.
+  /// Requires BlackHole (or equivalent) installed and configured as MACOS_LOOPBACK_DEVICE in .env.
+  Future<void> _startMacOSCapture() async {
+    final device = macosLoopbackDevice.trim();
+    _addLog('🎧 [macOS] Iniciando captura de audio del sistema (AVFoundation: $device)...');
+    try {
+      final args = <String>[
+        '-f', 'avfoundation',
+        '-i', ':$device',
+        '-ac', '1',
+        '-ar', '24000',
+        '-f', 's16le',
+        '-',
+      ];
+      final process = await Process.start(_resolveFfmpeg(), args);
+      _audioProcessSystem = process;
+      _audioSubscriptionSystem = process.stdout.listen(
+        (chunk) => _handleSystemAudioChunk(Uint8List.fromList(chunk)),
+        onDone: () => _addLog('🔴 [macOS] Captura de audio del sistema finalizada'),
+        onError: (e) {
+          _statusMessage = 'Error en ffmpeg (sistema macOS): $e';
+          _safeNotify();
+        },
+      );
+      process.exitCode.then((code) {
+        if (code != 0) {
+          _addLog('❌ [macOS] ffmpeg terminó con código $code — verifica que BlackHole esté instalado y configurado');
+        }
+      });
+      process.stderr.transform(const Utf8Decoder()).listen((line) {
+        if (showFfmpegLogs) _addLog('⚙️ [macOS-sys] $line');
+      });
+      _addLog('✅ [macOS] Captura de audio del sistema iniciada');
+    } catch (e) {
+      _addLog('❌ [macOS] No se pudo iniciar captura de audio: $e');
+      _statusMessage = 'No se pudo iniciar ffmpeg en macOS. Instala BlackHole y asegúrate de que ffmpeg esté en PATH.';
+      _listening = false;
+      _safeNotify();
+    }
+  }
+
+  Future<void> _stopMacOSCapture() async {
+    await _audioSubscriptionSystem?.cancel();
+    _audioSubscriptionSystem = null;
+    if (_audioProcessSystem != null) {
+      _audioProcessSystem!.kill();
+      await _audioProcessSystem!.exitCode;
+      _audioProcessSystem = null;
+    }
+    _addLog('🔴 [macOS] Captura detenida');
   }
 
   Future<void> _stopWindowsCapture() async {
