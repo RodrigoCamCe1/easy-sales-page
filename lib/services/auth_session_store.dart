@@ -27,6 +27,7 @@ class AuthSessionStore {
 
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
+    mOptions: MacOsOptions(useDataProtectionKeyChain: true),
   );
 
   static const String _accessTokenKey = 'auth_access_token';

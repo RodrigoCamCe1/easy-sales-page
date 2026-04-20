@@ -12,8 +12,22 @@ class OnboardingService {
   static const String _fileName = '.easyexpert_onboarding.json';
 
   Future<File> _file() async {
-    final dir = await getApplicationDocumentsDirectory();
-    return File(p.join(dir.path, _fileName));
+    try {
+      final dir = await getApplicationDocumentsDirectory();
+      return File(p.join(dir.path, _fileName));
+    } catch (e) {
+      // En macOS subventanas, path_provider falla
+      // Usar HOME/.config/easy-sales-ia como fallback
+      final home = Platform.environment['HOME'];
+      if (home != null && Platform.isMacOS) {
+        final fallback = Directory('$home/.config/easy-sales-ia');
+        if (!await fallback.exists()) {
+          await fallback.create(recursive: true);
+        }
+        return File(p.join(fallback.path, _fileName));
+      }
+      rethrow;
+    }
   }
 
   Future<Map<String, bool>> _load() async {

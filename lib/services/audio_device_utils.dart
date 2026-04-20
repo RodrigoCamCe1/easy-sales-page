@@ -37,21 +37,30 @@ Future<List<AudioDeviceInfo>> enumerateAudioDevices() async {
   try {
     final ffmpeg = _resolveFfmpeg();
 
-    // ffmpeg may output in UTF-8 or the system OEM codepage depending on
-    // the build/version. We run it once with raw bytes so we can try both
-    // decodings and pick the one that produces clean text.
-    final result = await Process.run(
-      ffmpeg,
-      ['-f', 'dshow', '-list_devices', 'true', '-i', 'dummy'],
-      stdoutEncoding: null,
-      stderrEncoding: null,
-    );
-
-    // ffmpeg lists devices on stderr
-    final rawBytes = result.stderr as List<int>;
-    final stderr = _decodeBest(rawBytes);
-
-    return _parseDevices(stderr);
+    if (Platform.isMacOS) {
+      // For macOS, use avfoundation
+      final result = await Process.run(
+        ffmpeg,
+        ['-f', 'avfoundation', '-list_devices', 'true', '-i', ''],
+        stdoutEncoding: null,
+        stderrEncoding: null,
+      );
+      final rawBytes = result.stderr as List<int>;
+      final stderr = _decodeBest(rawBytes);
+      return _parseMacDevices(stderr);
+    } else {
+      // Windows dshow
+      final result = await Process.run(
+        ffmpeg,
+        ['-f', 'dshow', '-list_devices', 'true', '-i', 'dummy'],
+        stdoutEncoding: null,
+        stderrEncoding: null,
+      );
+      // ffmpeg lists devices on stderr
+      final rawBytes = result.stderr as List<int>;
+      final stderr = _decodeBest(rawBytes);
+      return _parseDevices(stderr);
+    }
   } catch (_) {
     return [];
   }
@@ -98,6 +107,35 @@ List<AudioDeviceInfo> _parseDevices(String stderr) {
   // Flush last pending device if no alt name followed
   if (pendingName != null) {
     devices.add(AudioDeviceInfo(name: pendingName, altName: ''));
+  }
+
+  return devices;
+}
+
+List<AudioDeviceInfo> _parseMacDevices(String stderr) {
+  final lines = stderr.split('\n');
+  final devices = <AudioDeviceInfo>[];
+
+  final audioRe = RegExp(r'^\[AVFoundation.*\] AVFoundation audio devices:');
+  final deviceRe = RegExp(r'^\[AVFoundation.*\] \[(\d+)\] (.+)$');
+
+  bool inAudioSection = false;
+  for (final line in lines) {
+    if (audioRe.hasMatch(line)) {
+      inAudioSection = true;
+      continue;
+    }
+    if (inAudioSection) {
+      final match = deviceRe.firstMatch(line);
+      if (match != null) {
+        final index = match.group(1)!;
+        final name = match.group(2)!;
+        devices.add(AudioDeviceInfo(
+          name: name,
+          altName: index, // Use index as deviceId
+        ));
+      }
+    }
   }
 
   return devices;

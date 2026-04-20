@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_dotenv/flutter_dotenv.dart';
@@ -47,7 +48,16 @@ Map<String, dynamic> _parseWindowArgs(List<String> args) {
 Future<void> main(List<String> args) async {
   WidgetsFlutterBinding.ensureInitialized();
   await dotenv.load(fileName: '.env');
-  await AudioPreferencesStore.instance.load();
+
+  // En Windows, cargar AudioPreferencesStore antes de crear subventanas
+  // En macOS, protegido con try-catch porque path_provider falla en subventanas
+  if (Platform.isWindows) {
+    try {
+      await AudioPreferencesStore.instance.load();
+    } catch (e) {
+      debugPrint('[BOOT] Error loading audio prefs on Windows: $e');
+    }
+  }
 
   // ============================
   // SUBWINDOW (desktop_multi_window)
@@ -142,6 +152,18 @@ Future<void> main(List<String> args) async {
   // ============================
   // MAIN WINDOW (window_manager)
   // ============================
+  // En macOS ya se cargó arriba (con manejo de errores)
+  // En Windows, cargar de nuevo para la ventana principal
+  if (Platform.isMacOS) {
+    // En macOS, usar los valores por defecto de .env (que son seguros)
+  } else {
+    try {
+      await AudioPreferencesStore.instance.load();
+    } catch (e) {
+      debugPrint('[BOOT] Error loading audio prefs on main window: $e');
+    }
+  }
+  
   await windowManager.ensureInitialized();
   final flutterView = WidgetsBinding.instance.platformDispatcher.views.first;
   final screenSize = flutterView.physicalSize / flutterView.devicePixelRatio;

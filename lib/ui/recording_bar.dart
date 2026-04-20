@@ -14,8 +14,26 @@ import '../models/session_models.dart';
 import '../services/agent_profile_store.dart';
 import '../services/onboarding_service.dart';
 import '../services/recording_session_controller.dart';
+import 'macos_drag_area.dart';
 import 'onboarding_overlay.dart';
 import 'settings_panel.dart';
+
+/// Helper para minimizar la ventana de forma segura (especialmente en macOS subwindows)
+Future<void> _safeMinimize() async {
+  if (Platform.isMacOS) {
+    try {
+      await macosWindowMinimize();
+      return;
+    } catch (e) {
+      debugPrint('[RecordingBar] macOS minimize channel failed: $e');
+    }
+  }
+  try {
+    await windowManager.minimize();
+  } catch (e) {
+    debugPrint('[RecordingBar] Error minimizing: $e');
+  }
+}
 
 class RecordingBarApp extends StatelessWidget {
   const RecordingBarApp({super.key});
@@ -115,12 +133,17 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   Future<void> _loadActiveAgent() async {
-    final active = await AgentProfileStore.instance.getActiveAgent();
-    if (!mounted) return;
-    _controller.promptOverride = active.composedPrompt;
-    _controller.activeAgentId = active.id;
-    _controller.applyUpdatedPrompt();
-    _addLog('Agente activo: ${active.name} (${active.mode})');
+    try {
+      final active = await AgentProfileStore.instance.getActiveAgent();
+      if (!mounted) return;
+      _controller.promptOverride = active.composedPrompt;
+      _controller.activeAgentId = active.id;
+      _controller.applyUpdatedPrompt();
+      _addLog('Agente activo: ${active.name} (${active.mode})');
+    } catch (error) {
+      debugPrint('[RecordingBar] Error loading active agent: $error');
+      // Usa el prompt del sistema como fallback
+    }
   }
 
   @override
@@ -194,19 +217,27 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   Future<void> _configureFramelessWindow() async {
-    for (var attempt = 0; attempt < 4; attempt++) {
+    // macOS: handled natively in AppDelegate.swift via
+    // FlutterMultiWindowPlugin.setOnWindowCreatedCallback. The window_manager
+    // plugin isn't registered in desktop_multi_window sub-windows on macOS,
+    // so invoking it here only logs a MissingPluginException.
+    if (Platform.isMacOS) return;
+
+    const maxAttempts = 4;
+    for (var attempt = 0; attempt < maxAttempts; attempt++) {
       try {
         await windowManager.ensureInitialized();
         await windowManager.setBackgroundColor(Colors.transparent);
         await windowManager.setAsFrameless();
         await windowManager.setAlwaysOnTop(true);
+        debugPrint('[RecordingBar] Window configured successfully on attempt ${attempt + 1}');
         return;
       } catch (error) {
-        if (attempt == 3) {
-          debugPrint('RecordingBar frameless setup failed: $error');
-          return;
+        if (attempt < maxAttempts - 1) {
+          await Future<void>.delayed(const Duration(milliseconds: 120));
+        } else {
+          debugPrint('[RecordingBar] Frameless setup failed after $maxAttempts attempts: $error');
         }
-        await Future<void>.delayed(const Duration(milliseconds: 120));
       }
     }
   }
@@ -244,10 +275,14 @@ class _RecordingBarState extends State<RecordingBar> {
   }
 
   Future<void> _checkOnboarding() async {
-    final completed = await OnboardingService.instance.isCompleted('recording');
-    if (!completed && mounted) {
-      await Future.delayed(const Duration(milliseconds: 800));
-      if (mounted) setState(() => _showOnboarding = true);
+    try {
+      final completed = await OnboardingService.instance.isCompleted('recording');
+      if (!completed && mounted) {
+        await Future.delayed(const Duration(milliseconds: 800));
+        if (mounted) setState(() => _showOnboarding = true);
+      }
+    } catch (error) {
+      debugPrint('[RecordingBar] Error checking onboarding: $error');
     }
   }
 
@@ -419,44 +454,44 @@ class _RecordingBarState extends State<RecordingBar> {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        Row(
-                          children: [
-                            Row(
-                              children: [
-                                Container(
-                                  key: _keyPlayStop,
-                                  child: navIconButton(
-                                    Icons.play_arrow_rounded,
-                                    'Iniciar',
-                                    _controller.listening ? null : _startListening,
+                        PlatformDragArea(
+                          child: Row(
+                            children: [
+                              Row(
+                                children: [
+                                  Container(
+                                    key: _keyPlayStop,
+                                    child: navIconButton(
+                                      Icons.play_arrow_rounded,
+                                      'Iniciar',
+                                      _controller.listening ? null : _startListening,
+                                    ),
                                   ),
-                                ),
-                                const SizedBox(width: 8),
-                                navIconButton(
-                                  Icons.stop_rounded,
-                                  'Detener',
-                                  _controller.listening ? _stopListening : null,
-                                ),
-                                const SizedBox(width: 8),
-                                navIconButton(
-                                  Icons.settings_rounded,
-                                  'Configurar',
-                                  _toggleSettings,
-                                ),
-                                const SizedBox(width: 8),
-                                navIconButton(
-                                  Icons.help_outline_rounded,
-                                  'Tutorial',
-                                  () {
-                                    OnboardingService.instance.reset('recording');
-                                    setState(() => _showOnboarding = true);
-                                  },
-                                ),
-                              ],
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: DragToMoveArea(
+                                  const SizedBox(width: 8),
+                                  navIconButton(
+                                    Icons.stop_rounded,
+                                    'Detener',
+                                    _controller.listening ? _stopListening : null,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  navIconButton(
+                                    Icons.settings_rounded,
+                                    'Configurar',
+                                    _toggleSettings,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  navIconButton(
+                                    Icons.help_outline_rounded,
+                                    'Tutorial',
+                                    () {
+                                      OnboardingService.instance.reset('recording');
+                                      setState(() => _showOnboarding = true);
+                                    },
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
                                 child: Container(
                                   height: 28,
                                   alignment: Alignment.centerLeft,
@@ -471,28 +506,28 @@ class _RecordingBarState extends State<RecordingBar> {
                                   ),
                                 ),
                               ),
-                            ),
-                            Row(
-                              children: [
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  visualDensity: VisualDensity.compact,
-                                  onPressed: () => windowManager.minimize(),
-                                  icon: const Icon(Icons.remove_rounded),
-                                  tooltip: 'Minimizar',
-                                ),
-                                const SizedBox(width: 4),
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  visualDensity: VisualDensity.compact,
-                                  onPressed: () =>
-                                      _requestMainAction('barCloseRequested'),
-                                  icon: const Icon(Icons.close_rounded),
-                                  tooltip: 'Cerrar',
-                                ),
-                              ],
-                            ),
-                          ],
+                              Row(
+                                children: [
+                                  IconButton(
+                                    padding: EdgeInsets.zero,
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: () => _safeMinimize(),
+                                    icon: const Icon(Icons.remove_rounded),
+                                    tooltip: 'Minimizar',
+                                  ),
+                                  const SizedBox(width: 4),
+                                  IconButton(
+                                    padding: EdgeInsets.zero,
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: () =>
+                                        _requestMainAction('barCloseRequested'),
+                                    icon: const Icon(Icons.close_rounded),
+                                    tooltip: 'Cerrar',
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                         const SizedBox(height: 4),
                         const Divider(height: 0),

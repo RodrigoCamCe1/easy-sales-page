@@ -295,21 +295,28 @@ class RecordingSessionController extends ChangeNotifier {
       );
       _suggestionsClient!.setSystemPrompt(_buildSuggestionsOnlyPrompt());
 
+      // macOS ffmpeg capture has ~10 dB higher noise floor than the Windows
+      // native plugin, so VAD thresholds must be less permissive on mac or
+      // ambient noise keeps the buffer in "speaking" state forever. Also cap
+      // maxBuffer lower on mac so transcription fires periodically even if
+      // the user speaks continuously without clear pauses.
+      final isMac = Platform.isMacOS;
+
       // VAD for system audio → transcription + responses
       _systemVadBuffer = AudioVadBuffer(
         silenceThresholdDb: -50.0,
-        silenceDurationMs: 800,
+        silenceDurationMs: isMac ? 600 : 800,
         minSpeechDurationMs: 300,
-        maxBufferDurationMs: 12000,
+        maxBufferDurationMs: isMac ? 8000 : 12000,
         onSpeechComplete: _onGroqSpeechComplete,
       )..onLog = _addLog;
 
       // VAD for mic audio → transcription only
       _micVadBuffer = AudioVadBuffer(
-        silenceThresholdDb: -55.0,
-        silenceDurationMs: 2000,
+        silenceThresholdDb: isMac ? -45.0 : -55.0,
+        silenceDurationMs: isMac ? 700 : 2000,
         minSpeechDurationMs: 500,
-        maxBufferDurationMs: 30000,
+        maxBufferDurationMs: isMac ? 8000 : 30000,
         onSpeechComplete: _onGroqMicSpeechComplete,
       )..onLog = _addLog;
     } else {
@@ -373,6 +380,7 @@ class RecordingSessionController extends ChangeNotifier {
       await _startWindowsCapture();
     } else if (Platform.isMacOS) {
       await _startMacOSCapture();
+      await _startMacOSMicCapture();
     } else if (_audioSupported) {
       onRequestStartPlatformCapture?.call();
     } else {
@@ -408,6 +416,7 @@ class RecordingSessionController extends ChangeNotifier {
       await _stopWindowsCapture();
     } else if (Platform.isMacOS) {
       await _stopMacOSCapture();
+      await _stopMacOSMicCapture();
     } else if (_audioSupported) {
       _addLog('🔴 Deteniendo captura de audio');
       onRequestStopPlatformCapture?.call();
@@ -454,37 +463,41 @@ class RecordingSessionController extends ChangeNotifier {
   Future<void> sendManualPrompt(String prompt) async {
     if (prompt.isEmpty) return;
 
-    final resolvedKey = await _resolveOpenAIToken();
-    if (resolvedKey.isEmpty) {
-      _statusMessage =
-          'No se pudo obtener credenciales de OpenAI. Configura OPENAI_API_KEY en el backend.';
-      _safeNotify();
-      return;
+    // Lazy-init the Groq chat client if the session isn't active yet.
+    // When listening() has already run with the Groq pipeline, _chatClient is
+    // ready; otherwise we resolve the key (local .env → backend fallback) and
+    // spin up a chat-only client here.
+    if (_chatClient == null) {
+      if (_resolvedGroqKey.isEmpty) {
+        String key = groqApiKey;
+        if (key.isEmpty) {
+          final accessToken =
+              AuthSessionManager.instance.accessToken?.trim() ?? '';
+          if (accessToken.isNotEmpty) {
+            key = await RealtimeSessionApi()
+                    .fetchGroqKey(accessToken: accessToken) ??
+                '';
+          }
+        }
+        if (key.isEmpty) {
+          _statusMessage =
+              'No se pudo obtener credenciales de Groq. Configura GROQ_API_KEY en el backend.';
+          _safeNotify();
+          return;
+        }
+        _resolvedGroqKey = key;
+      }
+      _chatClient = ChatCompletionClient(
+        apiKey: _resolvedGroqKey,
+        onLog: _addLog,
+      );
+      _chatClient!.setSystemPrompt(_buildChatOnlyPrompt());
     }
 
     _chatResponses.add(ChatMessage(role: 'user', text: prompt));
     _safeNotify();
     onScrollChatToBottom?.call();
 
-    if (_openAIClientSystem == null && _openAIClientMic == null) {
-      _openAIClientMic = OpenAIRealtimeClient(
-        openAIKey: resolvedKey,
-        model: openAIRealtimeModel,
-        vadSilenceMs: vadSilenceMs,
-        sessionInstructions: _buildSessionInstructions(),
-        onDelta: _appendResponseDelta,
-        onTranscriptDelta: (t) => _appendTranscriptDelta(t, source: 'mic'),
-        onComplete: () {
-          _appendTranscriptDelta('\n', source: 'mic');
-          _handleResponseComplete();
-        },
-        showEvents: showOpenAIEvents,
-        sourceTag: 'mic',
-      );
-      await _openAIClientMic?.connect();
-    }
-
-    final responseClient = _openAIClientSystem ?? _openAIClientMic;
     _sessionStartedAt ??= DateTime.now();
     _sessionEndedAt = DateTime.now();
 
@@ -495,15 +508,17 @@ class RecordingSessionController extends ChangeNotifier {
     _activeAssistantTurnId = _assistantTurnSeq;
     _safeNotify();
 
-    _appendTranscriptDelta('\n', source: 'mic');
-
     final ctx = _buildRecentContext();
-    final manualInstructions = [
+    final userMessage = [
       'Mensaje del usuario (prioritario para este turno):\n$prompt',
       if (ctx.isNotEmpty) ctx,
     ].join('\n\n');
 
-    await responseClient?.requestResponse(instructions: manualInstructions);
+    await _chatClient!.sendMessage(
+      userMessage: userMessage,
+      onDelta: _appendResponseDelta,
+      onComplete: _handleResponseComplete,
+    );
   }
 
   Future<void> setMicMixEnabled(bool enabled) async {
@@ -1188,6 +1203,7 @@ class RecordingSessionController extends ChangeNotifier {
 
   /// Routes system audio to either Groq VAD buffer or OpenAI Realtime.
   int _sysChunkCount = 0;
+  int _micChunkCount = 0;
   void _handleSystemAudioChunk(Uint8List bytes) {
     _pendingSystemBytes += bytes.length;
     _sysChunkCount++;
@@ -1200,6 +1216,20 @@ class RecordingSessionController extends ChangeNotifier {
       _openAIClientSystem?.appendAudio(bytes);
     }
     _logAudioLevel(bytes, label: 'system');
+  }
+
+  void _handleMicAudioChunk(Uint8List bytes) {
+    _pendingMicBytes += bytes.length;
+    _micChunkCount++;
+    if (_micChunkCount <= 3) {
+      _addLog('🔍 Mic chunk #$_micChunkCount: groqActive=$_groqPipelineActive vadNull=${_micVadBuffer == null} bytes=${bytes.length}');
+    }
+    if (_groqPipelineActive) {
+      _micVadBuffer?.addAudio(bytes);
+    } else {
+      _openAIClientMic?.appendAudio(bytes);
+    }
+    _logAudioLevel(bytes, label: 'mic');
   }
 
   // ──────────────────────────────────────────────────────────────────────────
@@ -1371,6 +1401,40 @@ class RecordingSessionController extends ChangeNotifier {
     }
   }
 
+  /// Aggregates ffmpeg stdout into ~100ms PCM blocks before delivering to VAD.
+  /// Why: on macOS ffmpeg emits ~5ms slivers (see log "bytes=278"), which make
+  /// per-chunk dB too noisy for the silence timer in [AudioVadBuffer] to ever
+  /// fire. Windows' native plugin already delivers ~100ms blocks, so this is
+  /// applied only on the macOS capture path.
+  StreamSubscription<List<int>> _listenAggregatedMacOSAudio(
+    Stream<List<int>> stream,
+    void Function(Uint8List) onChunk, {
+    required void Function() onDone,
+    required void Function(Object error) onError,
+  }) {
+    // 24000 Hz * 2 bytes * 0.1s = 4800 bytes.
+    const int targetBytes = 4800;
+    final List<int> buf = [];
+    return stream.listen(
+      (chunk) {
+        buf.addAll(chunk);
+        while (buf.length >= targetBytes) {
+          final slice = Uint8List.fromList(buf.sublist(0, targetBytes));
+          buf.removeRange(0, targetBytes);
+          onChunk(slice);
+        }
+      },
+      onDone: () {
+        if (buf.isNotEmpty) {
+          onChunk(Uint8List.fromList(buf));
+          buf.clear();
+        }
+        onDone();
+      },
+      onError: onError,
+    );
+  }
+
   /// Returns the path to ffmpeg — bundled (next to the exe) if available, otherwise falls back to PATH.
   String _resolveFfmpeg() {
     final exeDir = p.dirname(Platform.resolvedExecutable);
@@ -1380,17 +1444,57 @@ class RecordingSessionController extends ChangeNotifier {
     return 'ffmpeg';
   }
 
+  /// Resolves macOS audio device name/index to numeric index.
+  /// If device is already numeric, returns it. Otherwise, queries ffmpeg to find index.
+  Future<String> _resolveMacOSDeviceIndex(String device) async {
+    // If it's already a number, return it
+    if (RegExp(r'^\d+$').hasMatch(device.trim())) {
+      return device.trim();
+    }
+
+    // Otherwise, list devices and find the matching one
+    try {
+      final result = await Process.run(
+        _resolveFfmpeg(),
+        ['-f', 'avfoundation', '-list_devices', 'true', '-i', ''],
+        stdoutEncoding: null,
+        stderrEncoding: null,
+      );
+      final rawBytes = result.stderr as List<int>;
+      final stderr = utf8.decode(rawBytes, allowMalformed: true);
+      final lines = stderr.split('\n');
+
+      final deviceRe = RegExp(r'^\[AVFoundation.*\] \[(\d+)\] (.+)$');
+      for (final line in lines) {
+        final match = deviceRe.firstMatch(line);
+        if (match != null) {
+          final index = match.group(1)!;
+          final name = match.group(2)!;
+          if (name.contains(device) || device.contains(name)) {
+            return index;
+          }
+        }
+      }
+    } catch (e) {
+      _addLog('⚠️ Error resolving macOS device: $e');
+    }
+
+    // Fallback: return original device (might fail, but at least we tried)
+    return device.trim();
+  }
+
   // ── macOS SYSTEM AUDIO CAPTURE (avfoundation + BlackHole) ─────────────────
 
   /// Starts system audio loopback capture on macOS via ffmpeg avfoundation.
   /// Requires BlackHole (or equivalent) installed and configured as MACOS_LOOPBACK_DEVICE in .env.
   Future<void> _startMacOSCapture() async {
-    final device = macosLoopbackDevice.trim();
-    _addLog('🎧 [macOS] Iniciando captura de audio del sistema (AVFoundation: $device)...');
+    final deviceInput = macosLoopbackDevice.trim();
+    final deviceIndex = await _resolveMacOSDeviceIndex(deviceInput);
+    _addLog('🎧 [macOS] Iniciando captura de audio del sistema (AVFoundation: $deviceInput → índice $deviceIndex)...');
     try {
       final args = <String>[
         '-f', 'avfoundation',
-        '-i', ':$device',
+        '-i', ':$deviceIndex',
         '-ac', '1',
         '-ar', '24000',
         '-f', 's16le',
@@ -1398,8 +1502,9 @@ class RecordingSessionController extends ChangeNotifier {
       ];
       final process = await Process.start(_resolveFfmpeg(), args);
       _audioProcessSystem = process;
-      _audioSubscriptionSystem = process.stdout.listen(
-        (chunk) => _handleSystemAudioChunk(Uint8List.fromList(chunk)),
+      _audioSubscriptionSystem = _listenAggregatedMacOSAudio(
+        process.stdout,
+        _handleSystemAudioChunk,
         onDone: () => _addLog('🔴 [macOS] Captura de audio del sistema finalizada'),
         onError: (e) {
           _statusMessage = 'Error en ffmpeg (sistema macOS): $e';
@@ -1423,6 +1528,47 @@ class RecordingSessionController extends ChangeNotifier {
     }
   }
 
+  Future<void> _startMacOSMicCapture() async {
+    final deviceInput = macosMicDevice.trim();
+    final deviceIndex = await _resolveMacOSDeviceIndex(deviceInput);
+    _addLog('🎤 [macOS] Iniciando captura de audio del micrófono (AVFoundation: $deviceInput → índice $deviceIndex)...');
+    try {
+      final args = <String>[
+        '-f', 'avfoundation',
+        '-i', ':$deviceIndex',
+        '-ac', '1',
+        '-ar', '24000',
+        '-f', 's16le',
+        '-',
+      ];
+      final process = await Process.start(_resolveFfmpeg(), args);
+      _audioProcessMic = process;
+      _audioSubscriptionMic = _listenAggregatedMacOSAudio(
+        process.stdout,
+        _handleMicAudioChunk,
+        onDone: () => _addLog('🔴 [macOS] Captura de audio del micrófono finalizada'),
+        onError: (e) {
+          _statusMessage = 'Error en ffmpeg (micrófono macOS): $e';
+          _safeNotify();
+        },
+      );
+      process.exitCode.then((code) {
+        if (code != 0) {
+          _addLog('❌ [macOS] ffmpeg mic terminó con código $code — verifica el dispositivo de micrófono');
+        }
+      });
+      process.stderr.transform(const Utf8Decoder()).listen((line) {
+        if (showFfmpegLogs) _addLog('⚙️ [macOS-mic] $line');
+      });
+      _addLog('✅ [macOS] Captura de audio del micrófono iniciada');
+    } catch (e) {
+      _addLog('❌ [macOS] No se pudo iniciar captura de micrófono: $e');
+      _statusMessage = 'No se pudo iniciar ffmpeg para micrófono en macOS.';
+      _listening = false;
+      _safeNotify();
+    }
+  }
+
   Future<void> _stopMacOSCapture() async {
     await _audioSubscriptionSystem?.cancel();
     _audioSubscriptionSystem = null;
@@ -1432,6 +1578,17 @@ class RecordingSessionController extends ChangeNotifier {
       _audioProcessSystem = null;
     }
     _addLog('🔴 [macOS] Captura detenida');
+  }
+
+  Future<void> _stopMacOSMicCapture() async {
+    await _audioSubscriptionMic?.cancel();
+    _audioSubscriptionMic = null;
+    if (_audioProcessMic != null) {
+      _audioProcessMic!.kill();
+      await _audioProcessMic!.exitCode;
+      _audioProcessMic = null;
+    }
+    _addLog('🔴 [macOS] Captura de micrófono detenida');
   }
 
   Future<void> _stopWindowsCapture() async {

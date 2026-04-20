@@ -52,8 +52,26 @@ class AudioPreferencesStore {
 
   // ──────────────────────────────────────────────────────────────
 
+  Future<Directory> _documentsDir() async {
+    try {
+      return await getApplicationDocumentsDirectory();
+    } catch (e) {
+      if (Platform.isMacOS) {
+        final home = Platform.environment['HOME'];
+        if (home != null) {
+          final fallback = Directory('$home/.config/easy-sales-ia');
+          if (!await fallback.exists()) {
+            await fallback.create(recursive: true);
+          }
+          return fallback;
+        }
+      }
+      rethrow;
+    }
+  }
+
   Future<File> _file() async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await _documentsDir();
     return File(p.join(dir.path, 'audio_prefs.json'));
   }
 

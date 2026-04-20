@@ -12,6 +12,24 @@ import '../core/app_config.dart';
 import '../models/session_models.dart';
 import '../services/agent_profile_store.dart';
 import '../services/meeting_session_controller.dart';
+import 'macos_drag_area.dart';
+
+/// Helper para minimizar la ventana de forma segura (especialmente en macOS subwindows)
+Future<void> _safeMinimize() async {
+  if (Platform.isMacOS) {
+    try {
+      await macosWindowMinimize();
+      return;
+    } catch (e) {
+      debugPrint('[MeetingBar] macOS minimize channel failed: $e');
+    }
+  }
+  try {
+    await windowManager.minimize();
+  } catch (e) {
+    debugPrint('[MeetingBar] Error minimizing: $e');
+  }
+}
 
 class MeetingBarApp extends StatelessWidget {
   const MeetingBarApp({super.key});
@@ -92,11 +110,16 @@ class _MeetingBarState extends State<MeetingBar> {
   }
 
   Future<void> _loadActiveAgent() async {
-    final active = await AgentProfileStore.instance.getActiveAgent();
-    if (!mounted) return;
-    _controller.promptOverride = active.composedPrompt;
-    _controller.activeAgentId = active.id;
-    _controller.applyUpdatedPrompt();
+    try {
+      final active = await AgentProfileStore.instance.getActiveAgent();
+      if (!mounted) return;
+      _controller.promptOverride = active.composedPrompt;
+      _controller.activeAgentId = active.id;
+      _controller.applyUpdatedPrompt();
+    } catch (error) {
+      debugPrint('[MeetingBar] Error loading active agent: $error');
+      // Usa el prompt del sistema como fallback
+    }
   }
 
   @override
@@ -128,8 +151,7 @@ class _MeetingBarState extends State<MeetingBar> {
         final args = call.arguments as Map?;
         final prompt = args?['prompt'] as String? ?? '';
         final agentId = args?['agentId'] as String? ?? '';
-        _controller.promptOverride =
-            prompt.isEmpty ? systemPrompt : prompt;
+        _controller.promptOverride = prompt.isEmpty ? systemPrompt : prompt;
         _controller.activeAgentId = agentId;
         _controller.applyUpdatedPrompt();
       }
@@ -162,16 +184,34 @@ class _MeetingBarState extends State<MeetingBar> {
   }
 
   Future<void> _configureFramelessWindow() async {
-    for (var attempt = 0; attempt < 4; attempt++) {
+    for (var attempt = 0; attempt < 5; attempt++) {
       try {
         await windowManager.ensureInitialized();
+
+        if (Platform.isMacOS) {
+          // macOS: orden específico para evitar problemas
+          await Future<void>.delayed(const Duration(milliseconds: 100));
+        }
+
         await windowManager.setBackgroundColor(Colors.transparent);
         await windowManager.setAsFrameless();
         await windowManager.setAlwaysOnTop(true);
+
+        if (Platform.isMacOS) {
+          // Pequeño retardo para asegurar que se apliquen los cambios
+          await Future<void>.delayed(const Duration(milliseconds: 50));
+        }
+
+        debugPrint('[MeetingBar] Window configured successfully');
         return;
       } catch (error) {
-        if (attempt == 3) return;
-        await Future<void>.delayed(const Duration(milliseconds: 120));
+        debugPrint(
+            '[MeetingBar] Configuration attempt $attempt failed: $error');
+        if (attempt == 4) {
+          debugPrint('[MeetingBar] Final configuration attempt failed');
+          return;
+        }
+        await Future<void>.delayed(const Duration(milliseconds: 150));
       }
     }
   }
@@ -323,41 +363,39 @@ class _MeetingBarState extends State<MeetingBar> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         // ── Top bar ──
-                        Row(
-                          children: [
-                            Row(
-                              children: [
-                                navIconButton(
-                                  Icons.play_arrow_rounded,
-                                  'Iniciar',
-                                  _controller.listening
-                                      ? null
-                                      : _startListening,
-                                ),
-                                const SizedBox(width: 8),
-                                navIconButton(
-                                  Icons.stop_rounded,
-                                  'Detener',
-                                  _controller.listening
-                                      ? _stopListening
-                                      : null,
-                                ),
-                                const SizedBox(width: 8),
-                                navIconButton(
-                                  Icons.settings_rounded,
-                                  'Configurar',
-                                  _openSettings,
-                                ),
-                              ],
-                            ),
-                            const SizedBox(width: 10),
-                            Expanded(
-                              child: DragToMoveArea(
+                        PlatformDragArea(
+                          child: Row(
+                            children: [
+                              Row(
+                                children: [
+                                  navIconButton(
+                                    Icons.play_arrow_rounded,
+                                    'Iniciar',
+                                    _controller.listening
+                                        ? null
+                                        : _startListening,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  navIconButton(
+                                    Icons.stop_rounded,
+                                    'Detener',
+                                    _controller.listening ? _stopListening : null,
+                                  ),
+                                  const SizedBox(width: 8),
+                                  navIconButton(
+                                    Icons.settings_rounded,
+                                    'Configurar',
+                                    _openSettings,
+                                  ),
+                                ],
+                              ),
+                              const SizedBox(width: 10),
+                              Expanded(
                                 child: Container(
                                   height: 28,
                                   alignment: Alignment.centerLeft,
-                                  padding: const EdgeInsets.symmetric(
-                                      horizontal: 8),
+                                  padding:
+                                      const EdgeInsets.symmetric(horizontal: 8),
                                   child: Row(
                                     children: [
                                       const Icon(
@@ -368,10 +406,8 @@ class _MeetingBarState extends State<MeetingBar> {
                                       const SizedBox(width: 6),
                                       Text(
                                         'Modo Reunión $appVersion',
-                                        style:
-                                            textTheme.labelSmall?.copyWith(
-                                          color:
-                                              colorScheme.onSurfaceVariant,
+                                        style: textTheme.labelSmall?.copyWith(
+                                          color: colorScheme.onSurfaceVariant,
                                           fontWeight: FontWeight.w600,
                                         ),
                                       ),
@@ -379,28 +415,28 @@ class _MeetingBarState extends State<MeetingBar> {
                                   ),
                                 ),
                               ),
-                            ),
-                            Row(
-                              children: [
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  visualDensity: VisualDensity.compact,
-                                  onPressed: () => windowManager.minimize(),
-                                  icon: const Icon(Icons.remove_rounded),
-                                  tooltip: 'Minimizar',
-                                ),
-                                const SizedBox(width: 4),
-                                IconButton(
-                                  padding: EdgeInsets.zero,
-                                  visualDensity: VisualDensity.compact,
-                                  onPressed: () => _requestMainAction(
-                                      'barCloseRequested'),
-                                  icon: const Icon(Icons.close_rounded),
-                                  tooltip: 'Cerrar',
-                                ),
-                              ],
-                            ),
-                          ],
+                              Row(
+                                children: [
+                                  IconButton(
+                                    padding: EdgeInsets.zero,
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: () => _safeMinimize(),
+                                    icon: const Icon(Icons.remove_rounded),
+                                    tooltip: 'Minimizar',
+                                  ),
+                                  const SizedBox(width: 4),
+                                  IconButton(
+                                    padding: EdgeInsets.zero,
+                                    visualDensity: VisualDensity.compact,
+                                    onPressed: () =>
+                                        _requestMainAction('barCloseRequested'),
+                                    icon: const Icon(Icons.close_rounded),
+                                    tooltip: 'Cerrar',
+                                  ),
+                                ],
+                              ),
+                            ],
+                          ),
                         ),
                         const SizedBox(height: 4),
                         const Divider(height: 0),
@@ -486,16 +522,15 @@ class _MeetingBarState extends State<MeetingBar> {
                         Container(
                           constraints: const BoxConstraints(minHeight: 34),
                           decoration: BoxDecoration(
-                            color:
-                                colorScheme.surfaceContainerHighest.withOpacity(0.58),
+                            color: colorScheme.surfaceContainerHighest
+                                .withOpacity(0.58),
                             borderRadius: BorderRadius.circular(12),
                             border: Border.all(
-                              color: colorScheme.outlineVariant
-                                  .withOpacity(0.72),
+                              color:
+                                  colorScheme.outlineVariant.withOpacity(0.72),
                             ),
                           ),
-                          padding:
-                              const EdgeInsets.symmetric(horizontal: 10),
+                          padding: const EdgeInsets.symmetric(horizontal: 10),
                           child: Row(
                             children: [
                               Expanded(
@@ -506,15 +541,13 @@ class _MeetingBarState extends State<MeetingBar> {
                                     border: InputBorder.none,
                                     hintText:
                                         'Pregunta sobre lo que quieras...',
-                                    hintStyle:
-                                        textTheme.bodySmall?.copyWith(
+                                    hintStyle: textTheme.bodySmall?.copyWith(
                                       color: colorScheme.onSurface
                                           .withOpacity(0.78),
                                     ),
                                     isDense: true,
-                                    contentPadding:
-                                        const EdgeInsets.symmetric(
-                                            vertical: 10),
+                                    contentPadding: const EdgeInsets.symmetric(
+                                        vertical: 10),
                                   ),
                                   style: textTheme.bodyMedium,
                                 ),
@@ -541,8 +574,7 @@ class _MeetingBarState extends State<MeetingBar> {
                         const SizedBox(height: 10),
                         Divider(
                           height: 1,
-                          color:
-                              colorScheme.outlineVariant.withOpacity(0.25),
+                          color: colorScheme.outlineVariant.withOpacity(0.25),
                         ),
                         const SizedBox(height: 6),
                         // ── Main content ──
@@ -550,18 +582,15 @@ class _MeetingBarState extends State<MeetingBar> {
                           child: Row(
                             children: [
                               AnimatedContainer(
-                                duration:
-                                    const Duration(milliseconds: 180),
+                                duration: const Duration(milliseconds: 180),
                                 curve: Curves.easeOut,
                                 width: _suggestionsSidebarOpen
                                     ? suggestionsWidth
                                     : 0,
                                 child: _suggestionsSidebarOpen
                                     ? _SuggestionsSidebar(
-                                        controller:
-                                            _suggestionScrollController,
-                                        suggestions:
-                                            _controller.suggestions,
+                                        controller: _suggestionScrollController,
+                                        suggestions: _controller.suggestions,
                                         onClose: _toggleSuggestions,
                                       )
                                     : const SizedBox.shrink(),
@@ -579,18 +608,15 @@ class _MeetingBarState extends State<MeetingBar> {
                                                 .buildTranscriptText(),
                                           )
                                         : _ChatPane(
-                                            controller:
-                                                _chatScrollController,
-                                            messages: _controller
-                                                .chatResponses,
-                                            pinnedMessages: _controller
-                                                .pinnedMessages,
-                                            emptyText: _controller
-                                                .statusMessage,
-                                            isThinking: _controller
-                                                .responseInFlight,
-                                            onTogglePin: _controller
-                                                .togglePin,
+                                            controller: _chatScrollController,
+                                            messages: _controller.chatResponses,
+                                            pinnedMessages:
+                                                _controller.pinnedMessages,
+                                            emptyText:
+                                                _controller.statusMessage,
+                                            isThinking:
+                                                _controller.responseInFlight,
+                                            onTogglePin: _controller.togglePin,
                                           ),
                               ),
                             ],
@@ -700,8 +726,7 @@ class _QuickChip extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         children: [
           Icon(icon,
-              size: 14,
-              color: effectiveColor ?? colorScheme.onSurfaceVariant),
+              size: 14, color: effectiveColor ?? colorScheme.onSurfaceVariant),
           const SizedBox(width: 6),
           Text(
             label,
@@ -806,8 +831,7 @@ class _SuggestionsSidebar extends StatelessWidget {
                           color: colorScheme.surface.withOpacity(0.34),
                           borderRadius: BorderRadius.circular(12),
                           border: Border.all(
-                            color:
-                                colorScheme.outlineVariant.withOpacity(0.48),
+                            color: colorScheme.outlineVariant.withOpacity(0.48),
                           ),
                         ),
                         child: Text(
@@ -903,11 +927,10 @@ class _ChatPane extends StatelessWidget {
                       const SizedBox(width: 4),
                       Text(
                         'Puntos clave (${pinnedMessages.length})',
-                        style:
-                            Theme.of(context).textTheme.labelSmall?.copyWith(
-                                  color: const Color(0xFFFFD54F),
-                                  fontWeight: FontWeight.w600,
-                                ),
+                        style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                              color: const Color(0xFFFFD54F),
+                              fontWeight: FontWeight.w600,
+                            ),
                       ),
                     ],
                   ),
@@ -950,8 +973,7 @@ class _ChatPane extends StatelessWidget {
             itemCount: itemCount,
             itemBuilder: (context, index) {
               final isThinkingRow = isThinking && index == itemCount - 1;
-              final role =
-                  isThinkingRow ? 'assistant' : messages[index].role;
+              final role = isThinkingRow ? 'assistant' : messages[index].role;
               final text = isThinkingRow
                   ? 'Asistente está pensando...'
                   : messages[index].text.trim();
@@ -960,15 +982,13 @@ class _ChatPane extends StatelessWidget {
               final currentAssistantTurnId = isThinkingRow
                   ? latestAssistantTurnId
                   : messages[index].assistantTurnId;
-              final isFreestyle =
-                  !isThinkingRow && messages[index].isFreestyle;
+              final isFreestyle = !isThinkingRow && messages[index].isFreestyle;
               final isPinned = !isThinkingRow && messages[index].pinned;
               const freestyleRed = Color(0xFFE53935);
 
               return Align(
-                alignment: isAssistant
-                    ? Alignment.centerLeft
-                    : Alignment.centerRight,
+                alignment:
+                    isAssistant ? Alignment.centerLeft : Alignment.centerRight,
                 child: GestureDetector(
                   onDoubleTap: isAssistant && !isThinkingRow
                       ? () => onTogglePin(index)
@@ -999,8 +1019,7 @@ class _ChatPane extends StatelessWidget {
                             ? const Color(0xFFFFD54F).withOpacity(0.7)
                             : isFreestyle
                                 ? freestyleRed.withOpacity(0.6)
-                                : colorScheme.outlineVariant
-                                    .withOpacity(0.54),
+                                : colorScheme.outlineVariant.withOpacity(0.54),
                         width: isPinned ? 1.5 : 1.0,
                       ),
                     ),
@@ -1024,8 +1043,7 @@ class _ChatPane extends StatelessWidget {
                                       .textTheme
                                       .labelSmall
                                       ?.copyWith(
-                                        color:
-                                            freestyleRed.withOpacity(0.8),
+                                        color: freestyleRed.withOpacity(0.8),
                                         fontSize: 10,
                                       ),
                                 ),

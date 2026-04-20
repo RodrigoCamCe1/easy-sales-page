@@ -88,30 +88,33 @@ class ChatCompletionClient {
         return '';
       }
 
-      // Parse SSE stream
-      await for (final chunk in response.transform(utf8.decoder)) {
-        final lines = chunk.split('\n');
-        for (final line in lines) {
-          if (!line.startsWith('data: ')) continue;
-          final data = line.substring(6).trim();
-          if (data == '[DONE]') break;
+      // Parse SSE stream. LineSplitter buffers partial lines across chunk
+      // boundaries — without it, a JSON payload split across two TCP chunks
+      // gets silently dropped (the second half has no "data: " prefix), which
+      // shows up as missing characters mid-word, e.g. "la pobreza" → "laobreza".
+      final stream = response
+          .transform(utf8.decoder)
+          .transform(const LineSplitter());
+      await for (final line in stream) {
+        if (!line.startsWith('data: ')) continue;
+        final data = line.substring(6).trim();
+        if (data == '[DONE]') break;
 
-          try {
-            final json = jsonDecode(data) as Map<String, dynamic>;
-            final choices = json['choices'] as List?;
-            if (choices == null || choices.isEmpty) continue;
+        try {
+          final json = jsonDecode(data) as Map<String, dynamic>;
+          final choices = json['choices'] as List?;
+          if (choices == null || choices.isEmpty) continue;
 
-            final delta = choices[0]['delta'] as Map<String, dynamic>?;
-            if (delta == null) continue;
+          final delta = choices[0]['delta'] as Map<String, dynamic>?;
+          if (delta == null) continue;
 
-            final content = delta['content'] as String?;
-            if (content != null && content.isNotEmpty) {
-              fullResponse.write(content);
-              onDelta(content);
-            }
-          } catch (_) {
-            // Skip malformed SSE lines
+          final content = delta['content'] as String?;
+          if (content != null && content.isNotEmpty) {
+            fullResponse.write(content);
+            onDelta(content);
           }
+        } catch (_) {
+          // Skip malformed SSE lines
         }
       }
 

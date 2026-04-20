@@ -50,7 +50,7 @@ class _SettingsPanelState extends State<SettingsPanel> {
     super.initState();
     _controller = TextEditingController();
     _loadAgent();
-    if (Platform.isWindows) _loadAudioDevices();
+    if (Platform.isWindows || Platform.isMacOS) _loadAudioDevices();
   }
 
   @override

@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
@@ -20,6 +21,15 @@ import 'agents_screen.dart';
 import 'loading_overlay.dart';
 import 'onboarding_overlay.dart';
 import 'settings_panel.dart';
+
+/// Helper para minimizar la ventana de forma segura
+Future<void> _safeMinimize() async {
+  try {
+    await windowManager.minimize();
+  } catch (e) {
+    debugPrint('[HomeScreen] Error minimizing: $e');
+  }
+}
 
 class HomeScreen extends StatefulWidget {
   const HomeScreen({super.key});
@@ -333,8 +343,8 @@ class _HomeScreenState extends State<HomeScreen> {
     final titleCtrl = TextEditingController();
     var selectedDate = DateTime.now();
     var startTime = TimeOfDay.now();
-    var endTime =
-        TimeOfDay(hour: TimeOfDay.now().hour + 1, minute: TimeOfDay.now().minute);
+    var endTime = TimeOfDay(
+        hour: TimeOfDay.now().hour + 1, minute: TimeOfDay.now().minute);
 
     showDialog(
       context: context,
@@ -370,7 +380,8 @@ class _HomeScreenState extends State<HomeScreen> {
                   children: [
                     Expanded(
                       child: OutlinedButton.icon(
-                        icon: const Icon(Icons.calendar_today_rounded, size: 16),
+                        icon:
+                            const Icon(Icons.calendar_today_rounded, size: 16),
                         label: Text(
                             '${selectedDate.day}/${selectedDate.month}/${selectedDate.year}'),
                         onPressed: () async {
@@ -510,8 +521,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _loadingAction = 'Iniciando modo virtual...');
     try {
       final view = WidgetsBinding.instance.platformDispatcher.views.first;
-      final screenWidth = view.physicalSize.width;
-      final screenHeight = view.physicalSize.height;
+      final dpr = view.devicePixelRatio;
+      final screenWidth = view.physicalSize.width / dpr;
+      final screenHeight = view.physicalSize.height / dpr;
       const minWidth = 820.0;
       const maxWidth = 1180.0;
       const widthRatio = 0.74;
@@ -526,7 +538,8 @@ class _HomeScreenState extends State<HomeScreen> {
       final top = (screenHeight - targetHeight) / 2;
 
       if (_barWindow != null) {
-        _barWindow?.setFrame(Rect.fromLTWH(left, top, targetWidth, targetHeight));
+        _barWindow
+            ?.setFrame(Rect.fromLTWH(left, top, targetWidth, targetHeight));
         await _barWindow?.show();
         await windowManager.hide();
         return;
@@ -551,8 +564,9 @@ class _HomeScreenState extends State<HomeScreen> {
     setState(() => _loadingAction = 'Iniciando modo reunion...');
     try {
       final view = WidgetsBinding.instance.platformDispatcher.views.first;
-      final screenWidth = view.physicalSize.width;
-      final screenHeight = view.physicalSize.height;
+      final dpr = view.devicePixelRatio;
+      final screenWidth = view.physicalSize.width / dpr;
+      final screenHeight = view.physicalSize.height / dpr;
       const minWidth = 820.0;
       const maxWidth = 1180.0;
       const widthRatio = 0.74;
@@ -569,13 +583,27 @@ class _HomeScreenState extends State<HomeScreen> {
       final window = await DesktopMultiWindow.createWindow(jsonEncode({
         'type': 'meeting',
       }));
+
+      // En macOS, necesitamos retardar un poco para que la ventana se inicialize
+      if (Platform.isMacOS) {
+        await Future<void>.delayed(const Duration(milliseconds: 200));
+      }
+
       window
         ..setFrame(
           Rect.fromLTWH(left, top, targetWidth, targetHeight),
         )
         ..setTitle('EasyExpert — Modo Reunión')
         ..show();
+
+      // Otro retardo en macOS para asegurar que se muestre
+      if (Platform.isMacOS) {
+        await Future<void>.delayed(const Duration(milliseconds: 100));
+      }
+
       await windowManager.hide();
+    } catch (error) {
+      debugPrint('[HomeScreen] Error opening meeting: $error');
     } finally {
       if (mounted) setState(() => _loadingAction = null);
     }
@@ -602,44 +630,52 @@ class _HomeScreenState extends State<HomeScreen> {
         OnboardingStep(
           key: _keyHelp,
           title: 'Ayuda',
-          description: 'Aquí puedes ver un resumen de todas las funciones de la app y repetir este tutorial.',
+          description:
+              'Aquí puedes ver un resumen de todas las funciones de la app y repetir este tutorial.',
         ),
         OnboardingStep(
           key: _keySettings,
           title: 'Configuración',
-          description: 'Selecciona tu micrófono, dispositivo de audio del sistema y edita el prompt de tu agente.',
+          description:
+              'Selecciona tu micrófono, dispositivo de audio del sistema y edita el prompt de tu agente.',
         ),
         OnboardingStep(
           key: _keySearch,
           title: 'Buscar conversaciones',
-          description: 'Busca entre tus conversaciones guardadas por texto o filtra por fecha y favoritos.',
+          description:
+              'Busca entre tus conversaciones guardadas por texto o filtra por fecha y favoritos.',
         ),
         OnboardingStep(
           key: _keyAgentPill,
           title: 'Tu agente activo',
-          description: 'Toca aquí para ver y cambiar entre tus agentes de IA. Cada agente tiene su personalidad y documentos.',
+          description:
+              'Toca aquí para ver y cambiar entre tus agentes de IA. Cada agente tiene su personalidad y documentos.',
         ),
         OnboardingStep(
           key: _keyStartButton,
           title: 'Iniciar sesión de IA',
-          description: 'Elige entre modo virtual (llamadas por computadora) o reunión presencial (solo micrófono).',
+          description:
+              'Elige entre modo virtual (llamadas por computadora) o reunión presencial (solo micrófono).',
           position: OnboardingPosition.left,
         ),
         OnboardingStep(
           key: _keyCalendar,
           title: 'Calendario',
-          description: 'Conecta tu Google Calendar para ver los eventos del día y agendar reuniones directamente desde aquí.',
+          description:
+              'Conecta tu Google Calendar para ver los eventos del día y agendar reuniones directamente desde aquí.',
           position: OnboardingPosition.left,
         ),
         OnboardingStep(
           key: _keyConversations,
           title: 'Conversaciones guardadas',
-          description: 'Aquí se guardan todas tus sesiones. Toca los tres puntos (⋮) de cada conversación para renombrar, marcar como favorita o eliminar.',
+          description:
+              'Aquí se guardan todas tus sesiones. Toca los tres puntos (⋮) de cada conversación para renombrar, marcar como favorita o eliminar.',
         ),
         OnboardingStep(
           key: _keyProfile,
           title: 'Tu perfil',
-          description: 'Ve tu plan actual, cierra sesión o accede al panel de administración si eres admin.',
+          description:
+              'Ve tu plan actual, cierra sesión o accede al panel de administración si eres admin.',
           position: OnboardingPosition.left,
         ),
       ];
@@ -867,7 +903,10 @@ class _HomeScreenState extends State<HomeScreen> {
     await AuthSessionManager.instance.logout();
   }
 
-  static const _adminEmails = ['intoyourmomy@gmail.com', 'rodrigo@easycorp.com'];
+  static const _adminEmails = [
+    'intoyourmomy@gmail.com',
+    'rodrigo@easycorp.com'
+  ];
   bool _isAdmin(String email) => _adminEmails.contains(email.toLowerCase());
 
   void _openAdminPanel() {
@@ -898,415 +937,437 @@ class _HomeScreenState extends State<HomeScreen> {
     return Stack(
       children: [
         Scaffold(
-      body: Container(
-        decoration: const BoxDecoration(
-          gradient: LinearGradient(
-            colors: [
-              Color(0xFF0B0C10),
-              Color(0xFF141723),
-              Color(0xFF0E0F14),
-            ],
-            begin: Alignment.topLeft,
-            end: Alignment.bottomRight,
-          ),
-        ),
-        child: SafeArea(
-          child: Row(
-            children: [
-              // ── Settings panel (left side) ──
-              if (_settingsPanelOpen)
-                Container(
-                  width: 320,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFF141723),
-                    border: Border(
-                      right: BorderSide(
-                        color: Colors.white.withValues(alpha: 0.1),
-                      ),
-                    ),
-                  ),
-                  child: SettingsPanel(
-                    onClose: _toggleSettings,
-                    onPromptSaved: () async {
-                      final active = await AgentProfileStore.instance.getActiveAgent();
-                      setState(() => _activeAgent = active);
-                      _syncBarPromptWithActiveAgent();
-                    },
-                  ),
-                ),
-              // ── Main content ──
-              Expanded(
-                child: Column(
-            children: [
-              _FramelessTitleBar(
-                title: 'EasyExpert $appVersion',
-                onClose: () async {
-                  await windowManager.close();
-                },
+          body: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                colors: [
+                  Color(0xFF0B0C10),
+                  Color(0xFF141723),
+                  Color(0xFF0E0F14),
+                ],
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
               ),
-              Padding(
-                padding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
-                child: Row(
-                  children: [
-                    Row(
-                      children: [
-                        Container(
-                          key: _keyHelp,
-                          child: _IconPill(
-                            icon: Icons.help_outline_rounded,
-                            tooltip: 'Tutorial',
-                            onTap: _showHelpDialog,
+            ),
+            child: SafeArea(
+              child: Row(
+                children: [
+                  // ── Settings panel (left side) ──
+                  if (_settingsPanelOpen)
+                    Container(
+                      width: 320,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF141723),
+                        border: Border(
+                          right: BorderSide(
+                            color: Colors.white.withValues(alpha: 0.1),
                           ),
-                        ),
-                        const SizedBox(width: 8),
-                        Container(
-                          key: _keySettings,
-                          child: _IconPill(
-                            icon: Icons.settings_rounded,
-                            tooltip: 'Configuracion',
-                            onTap: _toggleSettings,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(width: 12),
-                    Expanded(
-                      child: Container(
-                        key: _keySearch,
-                        height: 38,
-                        decoration: BoxDecoration(
-                          color: Colors.white.withOpacity(0.06),
-                          borderRadius: BorderRadius.circular(20),
-                          border: Border.all(
-                            color: Colors.white.withOpacity(0.08),
-                          ),
-                        ),
-                        padding: const EdgeInsets.symmetric(horizontal: 14),
-                        child: Row(
-                          children: [
-                            Icon(Icons.search,
-                                size: 18, color: Colors.white.withOpacity(0.6)),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: TextField(
-                                controller: _searchController,
-                                textAlignVertical: TextAlignVertical.center,
-                                decoration: const InputDecoration(
-                                  isDense: true,
-                                  contentPadding:
-                                      EdgeInsets.symmetric(vertical: 8),
-                                  border: InputBorder.none,
-                                  hintText: 'Buscar conversaciones...',
-                                ),
-                                style: textTheme.bodyMedium
-                                    ?.copyWith(color: Colors.white),
-                              ),
-                            ),
-                            Tooltip(
-                              message: _favoritesOnly
-                                  ? 'Mostrar todas'
-                                  : 'Mostrar solo favoritas',
-                              child: IconButton(
-                                visualDensity: VisualDensity.compact,
-                                splashRadius: 18,
-                                onPressed: () {
-                                  setState(() {
-                                    _favoritesOnly = !_favoritesOnly;
-                                  });
-                                },
-                                icon: Icon(
-                                  _favoritesOnly
-                                      ? Icons.star_rounded
-                                      : Icons.star_border_rounded,
-                                  size: 19,
-                                  color: _favoritesOnly
-                                      ? const Color(0xFFFFD45C)
-                                      : Colors.white70,
-                                ),
-                              ),
-                            ),
-                            Tooltip(
-                              message: _selectedDate == null
-                                  ? 'Filtrar por fecha'
-                                  : 'Fecha: ${_formatDate(_selectedDate!)}',
-                              child: IconButton(
-                                visualDensity: VisualDensity.compact,
-                                splashRadius: 18,
-                                onPressed: _pickDateFilter,
-                                icon: Icon(
-                                  Icons.calendar_month_rounded,
-                                  size: 19,
-                                  color: _selectedDate == null
-                                      ? Colors.white70
-                                      : const Color(0xFF7FC3FF),
-                                ),
-                              ),
-                            ),
-                            if (_selectedDate != null)
-                              Tooltip(
-                                message: 'Quitar filtro de fecha',
-                                child: IconButton(
-                                  visualDensity: VisualDensity.compact,
-                                  splashRadius: 18,
-                                  onPressed: _clearDateFilter,
-                                  icon: const Icon(
-                                    Icons.close_rounded,
-                                    size: 18,
-                                    color: Colors.white60,
-                                  ),
-                                ),
-                              ),
-                          ],
                         ),
                       ),
+                      child: SettingsPanel(
+                        onClose: _toggleSettings,
+                        onPromptSaved: () async {
+                          final active =
+                              await AgentProfileStore.instance.getActiveAgent();
+                          setState(() => _activeAgent = active);
+                          _syncBarPromptWithActiveAgent();
+                        },
+                      ),
                     ),
-                    const SizedBox(width: 12),
-                    PopupMenuButton<String>(
-                      key: _keyProfile,
-                      tooltip: 'Perfil',
-                      onSelected: (value) async {
-                        if (value == 'logout') {
-                          await _logout();
-                        } else if (value == 'admin') {
-                          _openAdminPanel();
-                        }
-                      },
-                      itemBuilder: (context) => [
-                        PopupMenuItem<String>(
-                          enabled: false,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            mainAxisSize: MainAxisSize.min,
+                  // ── Main content ──
+                  Expanded(
+                    child: Column(
+                      children: [
+                        _FramelessTitleBar(
+                          title: 'EasyExpert $appVersion',
+                          onClose: () async {
+                            await windowManager.close();
+                          },
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(24, 18, 24, 8),
+                          child: Row(
                             children: [
-                              Text(
-                                userName.isNotEmpty ? userName : 'Usuario',
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w600,
-                                ),
+                              Row(
+                                children: [
+                                  Container(
+                                    key: _keyHelp,
+                                    child: _IconPill(
+                                      icon: Icons.help_outline_rounded,
+                                      tooltip: 'Tutorial',
+                                      onTap: _showHelpDialog,
+                                    ),
+                                  ),
+                                  const SizedBox(width: 8),
+                                  Container(
+                                    key: _keySettings,
+                                    child: _IconPill(
+                                      icon: Icons.settings_rounded,
+                                      tooltip: 'Configuracion',
+                                      onTap: _toggleSettings,
+                                    ),
+                                  ),
+                                ],
                               ),
-                              if (userEmail.isNotEmpty)
-                                Text(
-                                  userEmail,
-                                  style: const TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 12,
+                              const SizedBox(width: 12),
+                              Expanded(
+                                child: Container(
+                                  key: _keySearch,
+                                  height: 38,
+                                  decoration: BoxDecoration(
+                                    color: Colors.white.withOpacity(0.06),
+                                    borderRadius: BorderRadius.circular(20),
+                                    border: Border.all(
+                                      color: Colors.white.withOpacity(0.08),
+                                    ),
+                                  ),
+                                  padding: const EdgeInsets.symmetric(
+                                      horizontal: 14),
+                                  child: Row(
+                                    children: [
+                                      Icon(Icons.search,
+                                          size: 18,
+                                          color: Colors.white.withOpacity(0.6)),
+                                      const SizedBox(width: 8),
+                                      Expanded(
+                                        child: TextField(
+                                          controller: _searchController,
+                                          textAlignVertical:
+                                              TextAlignVertical.center,
+                                          decoration: const InputDecoration(
+                                            isDense: true,
+                                            contentPadding:
+                                                EdgeInsets.symmetric(
+                                                    vertical: 8),
+                                            border: InputBorder.none,
+                                            hintText:
+                                                'Buscar conversaciones...',
+                                          ),
+                                          style: textTheme.bodyMedium
+                                              ?.copyWith(color: Colors.white),
+                                        ),
+                                      ),
+                                      Tooltip(
+                                        message: _favoritesOnly
+                                            ? 'Mostrar todas'
+                                            : 'Mostrar solo favoritas',
+                                        child: IconButton(
+                                          visualDensity: VisualDensity.compact,
+                                          splashRadius: 18,
+                                          onPressed: () {
+                                            setState(() {
+                                              _favoritesOnly = !_favoritesOnly;
+                                            });
+                                          },
+                                          icon: Icon(
+                                            _favoritesOnly
+                                                ? Icons.star_rounded
+                                                : Icons.star_border_rounded,
+                                            size: 19,
+                                            color: _favoritesOnly
+                                                ? const Color(0xFFFFD45C)
+                                                : Colors.white70,
+                                          ),
+                                        ),
+                                      ),
+                                      Tooltip(
+                                        message: _selectedDate == null
+                                            ? 'Filtrar por fecha'
+                                            : 'Fecha: ${_formatDate(_selectedDate!)}',
+                                        child: IconButton(
+                                          visualDensity: VisualDensity.compact,
+                                          splashRadius: 18,
+                                          onPressed: _pickDateFilter,
+                                          icon: Icon(
+                                            Icons.calendar_month_rounded,
+                                            size: 19,
+                                            color: _selectedDate == null
+                                                ? Colors.white70
+                                                : const Color(0xFF7FC3FF),
+                                          ),
+                                        ),
+                                      ),
+                                      if (_selectedDate != null)
+                                        Tooltip(
+                                          message: 'Quitar filtro de fecha',
+                                          child: IconButton(
+                                            visualDensity:
+                                                VisualDensity.compact,
+                                            splashRadius: 18,
+                                            onPressed: _clearDateFilter,
+                                            icon: const Icon(
+                                              Icons.close_rounded,
+                                              size: 18,
+                                              color: Colors.white60,
+                                            ),
+                                          ),
+                                        ),
+                                    ],
                                   ),
                                 ),
-                              const SizedBox(height: 4),
-                              _PlanBadge(plan: userPlan),
+                              ),
+                              const SizedBox(width: 12),
+                              PopupMenuButton<String>(
+                                key: _keyProfile,
+                                tooltip: 'Perfil',
+                                onSelected: (value) async {
+                                  if (value == 'logout') {
+                                    await _logout();
+                                  } else if (value == 'admin') {
+                                    _openAdminPanel();
+                                  }
+                                },
+                                itemBuilder: (context) => [
+                                  PopupMenuItem<String>(
+                                    enabled: false,
+                                    child: Column(
+                                      crossAxisAlignment:
+                                          CrossAxisAlignment.start,
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          userName.isNotEmpty
+                                              ? userName
+                                              : 'Usuario',
+                                          style: const TextStyle(
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                        if (userEmail.isNotEmpty)
+                                          Text(
+                                            userEmail,
+                                            style: const TextStyle(
+                                              color: Colors.white70,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        const SizedBox(height: 4),
+                                        _PlanBadge(plan: userPlan),
+                                      ],
+                                    ),
+                                  ),
+                                  const PopupMenuDivider(),
+                                  if (_isAdmin(userEmail))
+                                    const PopupMenuItem<String>(
+                                      value: 'admin',
+                                      child: Row(
+                                        children: [
+                                          Icon(Icons.admin_panel_settings,
+                                              size: 18),
+                                          SizedBox(width: 8),
+                                          Text('Panel Admin'),
+                                        ],
+                                      ),
+                                    ),
+                                  const PopupMenuItem<String>(
+                                    value: 'logout',
+                                    child: Text('Cerrar sesion'),
+                                  ),
+                                ],
+                                child: Container(
+                                  width: 34,
+                                  height: 34,
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF2A2F3A),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  alignment: Alignment.center,
+                                  child: Text(userInitial),
+                                ),
+                              ),
                             ],
                           ),
                         ),
-                        const PopupMenuDivider(),
-                        if (_isAdmin(userEmail))
-                          const PopupMenuItem<String>(
-                            value: 'admin',
-                            child: Row(
+                        Expanded(
+                          child: SingleChildScrollView(
+                            padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
-                                Icon(Icons.admin_panel_settings, size: 18),
-                                SizedBox(width: 8),
-                                Text('Panel Admin'),
+                                Row(
+                                  children: [
+                                    Image.asset(
+                                      'assets/logo_name.png',
+                                      width: 180,
+                                      fit: BoxFit.contain,
+                                    ),
+                                    const SizedBox(width: 12),
+                                    Container(
+                                      key: _keyAgentPill,
+                                      child: _SoftPill(
+                                        label: _activeAgent?.name ?? 'Agente',
+                                        icon: Icons.tune_rounded,
+                                        onTap: _openAgentsScreen,
+                                      ),
+                                    ),
+                                    const Spacer(),
+                                    PopupMenuButton<String>(
+                                      key: _keyStartButton,
+                                      onSelected: (value) {
+                                        if (value == 'virtual') {
+                                          _openRecordingBar();
+                                        } else if (value == 'meeting') {
+                                          _openMeetingBar();
+                                        }
+                                      },
+                                      itemBuilder: (context) => [
+                                        const PopupMenuItem(
+                                          value: 'virtual',
+                                          child: ListTile(
+                                            leading: Icon(Icons.headset_rounded,
+                                                size: 20),
+                                            title: Text('Modo Virtual'),
+                                            subtitle: Text(
+                                                'Audio del sistema + micrófono',
+                                                style: TextStyle(fontSize: 11)),
+                                            dense: true,
+                                            contentPadding: EdgeInsets.zero,
+                                          ),
+                                        ),
+                                        const PopupMenuItem(
+                                          value: 'meeting',
+                                          child: ListTile(
+                                            leading: Icon(Icons.groups_rounded,
+                                                size: 20),
+                                            title: Text('Modo Reunión'),
+                                            subtitle: Text(
+                                                'Solo micrófono — reuniones presenciales',
+                                                style: TextStyle(fontSize: 11)),
+                                            dense: true,
+                                            contentPadding: EdgeInsets.zero,
+                                          ),
+                                        ),
+                                      ],
+                                      child: Container(
+                                        padding: const EdgeInsets.symmetric(
+                                            horizontal: 18, vertical: 12),
+                                        decoration: BoxDecoration(
+                                          color: const Color(0xFF5CB2FF),
+                                          borderRadius:
+                                              BorderRadius.circular(18),
+                                        ),
+                                        child: const Row(
+                                          mainAxisSize: MainAxisSize.min,
+                                          children: [
+                                            Icon(Icons.play_arrow_rounded,
+                                                size: 18,
+                                                color: Color(0xFF0B0C10)),
+                                            SizedBox(width: 6),
+                                            Text('Start EasyExpert',
+                                                style: TextStyle(
+                                                  color: Color(0xFF0B0C10),
+                                                  fontWeight: FontWeight.w600,
+                                                )),
+                                            SizedBox(width: 4),
+                                            Icon(Icons.arrow_drop_down,
+                                                size: 18,
+                                                color: Color(0xFF0B0C10)),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 16),
+                                Row(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Expanded(
+                                      flex: 3,
+                                      child: _GradientCard(
+                                        title:
+                                            'Inicia reuniones con EasyExpert',
+                                        subtitle:
+                                            'EasyExpert analiza participantes, ofrece asistencia en tiempo real y genera notas.',
+                                        actionText: 'Unirse a demo',
+                                        onAction: _openRecordingBar,
+                                      ),
+                                    ),
+                                    const SizedBox(width: 16),
+                                    Expanded(
+                                      flex: 2,
+                                      child: Container(
+                                        key: _keyCalendar,
+                                        child: _CalendarCard(
+                                          connected: _calendarConnected,
+                                          loading: _calendarLoading,
+                                          events: _calendarEvents,
+                                          onConnect: _connectCalendar,
+                                          onCreateEvent: _showCreateEventDialog,
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 18),
+                                Row(
+                                  key: _keyConversations,
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      'Conversaciones',
+                                      style: textTheme.titleMedium?.copyWith(
+                                        color: Colors.white,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                    ),
+                                    TextButton.icon(
+                                      onPressed: _loadConversations,
+                                      icon: const Icon(Icons.refresh, size: 16),
+                                      label: const Text('Actualizar'),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 12),
+                                if (_loading)
+                                  const Center(
+                                      child: CircularProgressIndicator())
+                                else if (_visibleConversations.isEmpty)
+                                  (_searchQuery.isNotEmpty ||
+                                          _favoritesOnly ||
+                                          _selectedDate != null
+                                      ? _NoFilteredResults(
+                                          message: _buildNoResultsMessage(),
+                                        )
+                                      : _EmptyState(onStart: _openRecordingBar))
+                                else
+                                  Column(
+                                    children: _visibleConversations
+                                        .map(
+                                          (item) => _ConversationTile(
+                                            item: item,
+                                            onTap: () {
+                                              Navigator.push(
+                                                context,
+                                                MaterialPageRoute(
+                                                  builder: (_) =>
+                                                      ConversationDetailPage(
+                                                    conversation: item,
+                                                  ),
+                                                ),
+                                              );
+                                            },
+                                            onAction: (action) =>
+                                                _onConversationAction(
+                                                    action, item),
+                                          ),
+                                        )
+                                        .toList(),
+                                  ),
                               ],
                             ),
                           ),
-                        const PopupMenuItem<String>(
-                          value: 'logout',
-                          child: Text('Cerrar sesion'),
                         ),
                       ],
-                      child: Container(
-                        width: 34,
-                        height: 34,
-                        decoration: BoxDecoration(
-                          color: const Color(0xFF2A2F3A),
-                          borderRadius: BorderRadius.circular(10),
-                        ),
-                        alignment: Alignment.center,
-                        child: Text(userInitial),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: SingleChildScrollView(
-                  padding: const EdgeInsets.fromLTRB(24, 12, 24, 24),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Row(
-                        children: [
-                          Image.asset(
-                            'assets/logo_name.png',
-                            width: 180,
-                            fit: BoxFit.contain,
-                          ),
-                          const SizedBox(width: 12),
-                          Container(
-                            key: _keyAgentPill,
-                            child: _SoftPill(
-                              label: _activeAgent?.name ?? 'Agente',
-                              icon: Icons.tune_rounded,
-                              onTap: _openAgentsScreen,
-                            ),
-                          ),
-                          const Spacer(),
-                          PopupMenuButton<String>(
-                            key: _keyStartButton,
-                            onSelected: (value) {
-                              if (value == 'virtual') {
-                                _openRecordingBar();
-                              } else if (value == 'meeting') {
-                                _openMeetingBar();
-                              }
-                            },
-                            itemBuilder: (context) => [
-                              const PopupMenuItem(
-                                value: 'virtual',
-                                child: ListTile(
-                                  leading: Icon(Icons.headset_rounded, size: 20),
-                                  title: Text('Modo Virtual'),
-                                  subtitle: Text('Audio del sistema + micrófono',
-                                      style: TextStyle(fontSize: 11)),
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                              const PopupMenuItem(
-                                value: 'meeting',
-                                child: ListTile(
-                                  leading: Icon(Icons.groups_rounded, size: 20),
-                                  title: Text('Modo Reunión'),
-                                  subtitle: Text('Solo micrófono — reuniones presenciales',
-                                      style: TextStyle(fontSize: 11)),
-                                  dense: true,
-                                  contentPadding: EdgeInsets.zero,
-                                ),
-                              ),
-                            ],
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                  horizontal: 18, vertical: 12),
-                              decoration: BoxDecoration(
-                                color: const Color(0xFF5CB2FF),
-                                borderRadius: BorderRadius.circular(18),
-                              ),
-                              child: const Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(Icons.play_arrow_rounded,
-                                      size: 18, color: Color(0xFF0B0C10)),
-                                  SizedBox(width: 6),
-                                  Text('Start EasyExpert',
-                                      style: TextStyle(
-                                        color: Color(0xFF0B0C10),
-                                        fontWeight: FontWeight.w600,
-                                      )),
-                                  SizedBox(width: 4),
-                                  Icon(Icons.arrow_drop_down,
-                                      size: 18, color: Color(0xFF0B0C10)),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 16),
-                      Row(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Expanded(
-                            flex: 3,
-                            child: _GradientCard(
-                              title: 'Inicia reuniones con EasyExpert',
-                              subtitle:
-                                  'EasyExpert analiza participantes, ofrece asistencia en tiempo real y genera notas.',
-                              actionText: 'Unirse a demo',
-                              onAction: _openRecordingBar,
-                            ),
-                          ),
-                          const SizedBox(width: 16),
-                          Expanded(
-                            flex: 2,
-                            child: Container(
-                              key: _keyCalendar,
-                              child: _CalendarCard(
-                                connected: _calendarConnected,
-                                loading: _calendarLoading,
-                                events: _calendarEvents,
-                                onConnect: _connectCalendar,
-                                onCreateEvent: _showCreateEventDialog,
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 18),
-                      Row(
-                        key: _keyConversations,
-                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                        children: [
-                          Text(
-                            'Conversaciones',
-                            style: textTheme.titleMedium?.copyWith(
-                              color: Colors.white,
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                          TextButton.icon(
-                            onPressed: _loadConversations,
-                            icon: const Icon(Icons.refresh, size: 16),
-                            label: const Text('Actualizar'),
-                          ),
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      if (_loading)
-                        const Center(child: CircularProgressIndicator())
-                      else if (_visibleConversations.isEmpty)
-                        (_searchQuery.isNotEmpty ||
-                                _favoritesOnly ||
-                                _selectedDate != null
-                            ? _NoFilteredResults(
-                                message: _buildNoResultsMessage(),
-                              )
-                            : _EmptyState(onStart: _openRecordingBar))
-                      else
-                        Column(
-                          children: _visibleConversations
-                              .map(
-                                (item) => _ConversationTile(
-                                  item: item,
-                                  onTap: () {
-                                    Navigator.push(
-                                      context,
-                                      MaterialPageRoute(
-                                        builder: (_) => ConversationDetailPage(
-                                          conversation: item,
-                                        ),
-                                      ),
-                                    );
-                                  },
-                                  onAction: (action) =>
-                                      _onConversationAction(action, item),
-                                ),
-                              )
-                              .toList(),
-                        ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ), // end Column
-              ), // end Expanded (main content)
-            ],
-          ), // end Row (settings + main)
-        ),
-      ),
-    ), // end Scaffold
-        if (_loadingAction != null)
-          LoadingOverlay(message: _loadingAction!),
+                    ), // end Column
+                  ), // end Expanded (main content)
+                ],
+              ), // end Row (settings + main)
+            ),
+          ),
+        ), // end Scaffold
+        if (_loadingAction != null) LoadingOverlay(message: _loadingAction!),
         if (_showOnboarding)
           OnboardingOverlay(
             steps: _buildOnboardingSteps(),
@@ -1409,8 +1470,8 @@ class _IconPill extends StatelessWidget {
                   : Colors.white.withOpacity(0.08),
             ),
           ),
-          child: Icon(icon, size: 18,
-              color: isActive ? const Color(0xFF5CB2FF) : null),
+          child: Icon(icon,
+              size: 18, color: isActive ? const Color(0xFF5CB2FF) : null),
         ),
       ),
     );
@@ -1883,7 +1944,7 @@ class _FramelessTitleBar extends StatelessWidget {
           ),
           _TitleButton(
             icon: Icons.remove_rounded,
-            onPressed: () async => windowManager.minimize(),
+            onPressed: () => _safeMinimize(),
             tooltip: 'Minimizar',
           ),
           _TitleButton(

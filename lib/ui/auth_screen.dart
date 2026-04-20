@@ -6,6 +6,15 @@ import '../core/app_config.dart';
 import '../services/auth_api.dart';
 import '../services/auth_session_manager.dart';
 
+/// Helper para minimizar la ventana de forma segura
+Future<void> _safeMinimize() async {
+  try {
+    await windowManager.minimize();
+  } catch (e) {
+    debugPrint('[AuthScreen] Error minimizing: $e');
+  }
+}
+
 enum _AuthMode {
   login,
   register,
@@ -570,7 +579,7 @@ class _AuthScreenState extends State<AuthScreen> {
                     _WindowButton(
                       tooltip: 'Minimizar',
                       icon: Icons.remove_rounded,
-                      onTap: () async => windowManager.minimize(),
+                      onTap: () => _safeMinimize(),
                     ),
                     const SizedBox(width: 8),
                     _WindowButton(

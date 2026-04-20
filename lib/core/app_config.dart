@@ -10,7 +10,7 @@ const String githubRepo = 'RodrigoCamCe1/easy-sales-page';
 const double barHeight = 280.0;
 const String dartDefineOpenAIKey = String.fromEnvironment('OPENAI_API_KEY');
 const String defaultOpenAIRealtimeModel = 'gpt-4o-mini-realtime-preview';
-const bool showFfmpegLogs = false;
+const bool showFfmpegLogs = true;
 const bool showOpenAIEvents = false;
 const String promptFileName = 'prompt.txt';
 const int defaultVadSilenceMs = 1000;
@@ -73,5 +73,5 @@ String get macosLoopbackDevice =>
     dotenv.env['MACOS_LOOPBACK_DEVICE'] ?? 'BlackHole 2ch';
 
 /// AVFoundation audio device index for microphone on macOS.
-/// "0" = first audio device (usually built-in mic). Configure via MACOS_MIC_DEVICE in .env.
-String get macosMicDevice => dotenv.env['MACOS_MIC_DEVICE'] ?? '0';
+/// "1" = second audio device (usually built-in mic). Configure via MACOS_MIC_DEVICE in .env.
+String get macosMicDevice => dotenv.env['MACOS_MIC_DEVICE'] ?? '1';

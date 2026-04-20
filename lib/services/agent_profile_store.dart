@@ -22,7 +22,21 @@ class AgentProfileStore {
   static const String customDefaultAgentId = 'custom-default';
 
   Future<Directory> _documentsDir() async {
-    return getApplicationDocumentsDirectory();
+    try {
+      return await getApplicationDocumentsDirectory();
+    } catch (e) {
+      // En macOS subventanas, path_provider falla
+      // Usar HOME/.config/easy-sales-ia como fallback
+      final home = Platform.environment['HOME'];
+      if (home != null && Platform.isMacOS) {
+        final fallback = Directory('$home/.config/easy-sales-ia');
+        if (!await fallback.exists()) {
+          await fallback.create(recursive: true);
+        }
+        return fallback;
+      }
+      rethrow;
+    }
   }
 
   Future<File> _file() async {

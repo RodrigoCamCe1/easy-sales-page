@@ -822,6 +822,17 @@ class MeetingSessionController extends ChangeNotifier {
     final filename = Platform.isWindows ? 'ffmpeg.exe' : 'ffmpeg';
     final bundled = p.join(exeDir, filename);
     if (File(bundled).existsSync()) return bundled;
+
+    final commonPaths = <String>[
+      '/opt/homebrew/bin/ffmpeg',
+      '/usr/local/bin/ffmpeg',
+      '/usr/bin/ffmpeg',
+      '/bin/ffmpeg',
+    ];
+    for (final candidate in commonPaths) {
+      if (File(candidate).existsSync()) return candidate;
+    }
+
     return 'ffmpeg';
   }
 

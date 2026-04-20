@@ -14,8 +14,26 @@ class ConversationStore {
   static final ConversationStore instance = ConversationStore._();
   final BackendDataApi _remoteApi = BackendDataApi();
 
+  Future<Directory> _documentsDir() async {
+    try {
+      return await getApplicationDocumentsDirectory();
+    } catch (e) {
+      if (Platform.isMacOS) {
+        final home = Platform.environment['HOME'];
+        if (home != null) {
+          final fallback = Directory('$home/.config/easy-sales-ia');
+          if (!await fallback.exists()) {
+            await fallback.create(recursive: true);
+          }
+          return fallback;
+        }
+      }
+      rethrow;
+    }
+  }
+
   Future<File> _file() async {
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await _documentsDir();
     final scoped = File(
       p.join(dir.path, 'conversations_${await storeUserKey()}.json'),
     );
@@ -47,7 +65,7 @@ class ConversationStore {
     final scoped = await parseFile(file);
     if (scoped.isNotEmpty) return scoped;
 
-    final dir = await getApplicationDocumentsDirectory();
+    final dir = await _documentsDir();
     final legacy = File(p.join(dir.path, 'conversations.json'));
     final legacyItems = await parseFile(legacy);
     if (legacyItems.isNotEmpty && !await file.exists()) {

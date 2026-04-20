@@ -10,6 +10,15 @@ import '../services/agent_profile_store.dart';
 import '../services/audio_device_utils.dart';
 import '../services/audio_preferences_store.dart';
 
+/// Helper para minimizar la ventana de forma segura
+Future<void> _safeMinimize() async {
+  try {
+    await windowManager.minimize();
+  } catch (e) {
+    debugPrint('[SettingsWindow] Error minimizing: $e');
+  }
+}
+
 class SettingsWindowApp extends StatelessWidget {
   const SettingsWindowApp({
     super.key,
@@ -527,7 +536,7 @@ class _SettingsTitleBar extends StatelessWidget {
           _SettingsWindowButton(
             icon: Icons.remove_rounded,
             tooltip: 'Minimizar',
-            onPressed: () async => windowManager.minimize(),
+            onPressed: () => _safeMinimize(),
           ),
           _SettingsWindowButton(
             icon: Icons.crop_square_rounded,
