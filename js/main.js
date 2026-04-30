@@ -48,22 +48,48 @@ featureCards.forEach(card => {
   featureExitObserver.observe(card);
 });
 
+function findLatestAsset(releases, matcher) {
+  for (const release of releases) {
+    const assets = Array.isArray(release.assets) ? release.assets : [];
+    const asset = assets.find(matcher);
+    if (asset) return { release, asset };
+  }
+  return null;
+}
+
 // Dynamic version from GitHub releases (optional, graceful fallback)
 async function fetchLatestVersion() {
   try {
-    const res = await fetch('https://api.github.com/repos/RodrigoCamCe1/easy-sales-page/releases/latest');
+    const res = await fetch('https://api.github.com/repos/RodrigoCamCe1/easy-sales-page/releases');
     if (!res.ok) return;
-    const data = await res.json();
-    const version = data.tag_name ? data.tag_name.replace(/^v/, '') : null;
-    const asset = data.assets && data.assets.find(a => a.name.endsWith('.exe'));
-    if (version) {
-      document.querySelectorAll('.version-tag').forEach(el => {
-        el.textContent = 'v' + version;
-      });
+    const releases = await res.json();
+    if (!Array.isArray(releases)) return;
+
+    const windowsMatch = findLatestAsset(releases, a => a.name.toLowerCase().endsWith('.exe'));
+    const macMatch = findLatestAsset(releases, a => {
+      const name = a.name.toLowerCase();
+      return name.endsWith('.zip') && (name.includes('mac') || name.includes('osx'));
+    });
+
+    if (windowsMatch && windowsMatch.asset.browser_download_url) {
+      const btn = document.getElementById('download-btn-windows');
+      if (btn) btn.href = windowsMatch.asset.browser_download_url;
+      const version = windowsMatch.release.tag_name ? windowsMatch.release.tag_name.replace(/^v/, '') : null;
+      if (version) {
+        document.querySelectorAll('.version-tag-windows').forEach(el => {
+          el.textContent = 'v' + version;
+        });
+      }
     }
-    if (asset && asset.browser_download_url) {
-      const btn = document.getElementById('download-btn');
-      if (btn) btn.href = asset.browser_download_url;
+    if (macMatch && macMatch.asset.browser_download_url) {
+      const btn = document.getElementById('download-btn-macos');
+      if (btn) btn.href = macMatch.asset.browser_download_url;
+      const version = macMatch.release.tag_name ? macMatch.release.tag_name.replace(/^v/, '') : null;
+      if (version) {
+        document.querySelectorAll('.version-tag-macos').forEach(el => {
+          el.textContent = 'v' + version;
+        });
+      }
     }
   } catch (_) {
     // Silently ignore — static fallback values are already set in HTML

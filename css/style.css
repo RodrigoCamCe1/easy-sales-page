@@ -514,8 +514,18 @@ ul { list-style: none; }
   margin-bottom: 32px;
   font-size: 1.05rem;
 }
-.download-card .btn-primary {
+.download-actions {
+  display: grid;
+  gap: 16px;
   margin-bottom: 32px;
+}
+.download-card .btn-primary,
+.download-card .btn-secondary {
+  margin-bottom: 32px;
+}
+.download-actions .btn-primary,
+.download-actions .btn-secondary {
+  margin-bottom: 0;
 }
 .system-reqs {
   text-align: left;
@@ -551,13 +561,15 @@ ul { list-style: none; }
   background: var(--accent);
   transform: translateY(-50%);
 }
-.smartscreen-note {
+.download-note {
   display: flex;
   align-items: center;
   justify-content: center;
   gap: 8px;
   font-size: 0.8rem;
   color: var(--text-muted);
+  margin-top: 14px;
+  line-height: 1.5;
 }
 
 /* ── Footer ── */
