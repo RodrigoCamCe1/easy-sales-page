@@ -57,6 +57,17 @@ function findLatestAsset(releases, matcher) {
   return null;
 }
 
+function extractDisplayVersion(match) {
+  if (!match) return null;
+  const assetName = match.asset && match.asset.name ? match.asset.name : '';
+  const assetVersion = assetName.match(/(\d+\.\d+\.\d+)/);
+  if (assetVersion) return assetVersion[1];
+  if (match.release && match.release.tag_name) {
+    return match.release.tag_name.replace(/^v/, '');
+  }
+  return null;
+}
+
 // Dynamic version from GitHub releases (optional, graceful fallback)
 async function fetchLatestVersion() {
   try {
@@ -74,7 +85,7 @@ async function fetchLatestVersion() {
     if (windowsMatch && windowsMatch.asset.browser_download_url) {
       const btn = document.getElementById('download-btn-windows');
       if (btn) btn.href = windowsMatch.asset.browser_download_url;
-      const version = windowsMatch.release.tag_name ? windowsMatch.release.tag_name.replace(/^v/, '') : null;
+      const version = extractDisplayVersion(windowsMatch);
       if (version) {
         document.querySelectorAll('.version-tag-windows').forEach(el => {
           el.textContent = 'v' + version;
@@ -84,7 +95,7 @@ async function fetchLatestVersion() {
     if (macMatch && macMatch.asset.browser_download_url) {
       const btn = document.getElementById('download-btn-macos');
       if (btn) btn.href = macMatch.asset.browser_download_url;
-      const version = macMatch.release.tag_name ? macMatch.release.tag_name.replace(/^v/, '') : null;
+      const version = extractDisplayVersion(macMatch);
       if (version) {
         document.querySelectorAll('.version-tag-macos').forEach(el => {
           el.textContent = 'v' + version;
