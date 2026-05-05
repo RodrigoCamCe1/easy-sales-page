@@ -27,7 +27,11 @@ class AuthSessionStore {
 
   static const _storage = FlutterSecureStorage(
     aOptions: AndroidOptions(encryptedSharedPreferences: true),
-    mOptions: MacOsOptions(useDataProtectionKeyChain: true),
+    // useDataProtectionKeyChain: false → use the legacy file-based Keychain.
+    // The data-protection keychain requires proper code signing / entitlements
+    // and silently fails in unsigned `flutter run` dev builds, which prevented
+    // the auth session from persisting across subwindows.
+    mOptions: MacOsOptions(useDataProtectionKeyChain: false),
   );
 
   static const String _accessTokenKey = 'auth_access_token';

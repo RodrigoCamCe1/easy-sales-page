@@ -80,6 +80,13 @@ class AppDelegate: FlutterAppDelegate {
       // under FlutterView stays opaque regardless of the NSWindow config.
       controller.backgroundColor = NSColor.clear
 
+      // desktop_multi_window 0.2.1 doesn't auto-register Flutter plugins on
+      // sub-window engines, so calls into flutter_secure_storage,
+      // path_provider, etc. fail with MissingPluginException (e.g. the auth
+      // session can't be loaded in the recording bar). Manually register all
+      // generated plugins on the sub-window's engine here.
+      RegisterGeneratedPlugins(registry: controller)
+
       let channel = FlutterMethodChannel(
         name: "easyexpert/window_drag",
         binaryMessenger: controller.engine.binaryMessenger
