@@ -363,34 +363,34 @@ class _MeetingBarState extends State<MeetingBar> {
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
                         // ── Top bar ──
-                        PlatformDragArea(
-                          child: Row(
-                            children: [
-                              Row(
-                                children: [
-                                  navIconButton(
-                                    Icons.play_arrow_rounded,
-                                    'Iniciar',
-                                    _controller.listening
-                                        ? null
-                                        : _startListening,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  navIconButton(
-                                    Icons.stop_rounded,
-                                    'Detener',
-                                    _controller.listening ? _stopListening : null,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  navIconButton(
-                                    Icons.settings_rounded,
-                                    'Configurar',
-                                    _openSettings,
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
+                        Row(
+                          children: [
+                            Row(
+                              children: [
+                                navIconButton(
+                                  Icons.play_arrow_rounded,
+                                  'Iniciar',
+                                  _controller.listening
+                                      ? null
+                                      : _startListening,
+                                ),
+                                const SizedBox(width: 8),
+                                navIconButton(
+                                  Icons.stop_rounded,
+                                  'Detener',
+                                  _controller.listening ? _stopListening : null,
+                                ),
+                                const SizedBox(width: 8),
+                                navIconButton(
+                                  Icons.settings_rounded,
+                                  'Configurar',
+                                  _openSettings,
+                                ),
+                              ],
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: PlatformDragArea(
                                 child: Container(
                                   height: 28,
                                   alignment: Alignment.centerLeft,
@@ -415,28 +415,28 @@ class _MeetingBarState extends State<MeetingBar> {
                                   ),
                                 ),
                               ),
-                              Row(
-                                children: [
-                                  IconButton(
-                                    padding: EdgeInsets.zero,
-                                    visualDensity: VisualDensity.compact,
-                                    onPressed: () => _safeMinimize(),
-                                    icon: const Icon(Icons.remove_rounded),
-                                    tooltip: 'Minimizar',
-                                  ),
-                                  const SizedBox(width: 4),
-                                  IconButton(
-                                    padding: EdgeInsets.zero,
-                                    visualDensity: VisualDensity.compact,
-                                    onPressed: () =>
-                                        _requestMainAction('barCloseRequested'),
-                                    icon: const Icon(Icons.close_rounded),
-                                    tooltip: 'Cerrar',
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                            ),
+                            Row(
+                              children: [
+                                IconButton(
+                                  padding: EdgeInsets.zero,
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: () => _safeMinimize(),
+                                  icon: const Icon(Icons.remove_rounded),
+                                  tooltip: 'Minimizar',
+                                ),
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  padding: EdgeInsets.zero,
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: () =>
+                                      _requestMainAction('barCloseRequested'),
+                                  icon: const Icon(Icons.close_rounded),
+                                  tooltip: 'Cerrar',
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         const Divider(height: 0),

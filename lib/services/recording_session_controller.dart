@@ -185,22 +185,34 @@ class RecordingSessionController extends ChangeNotifier {
       // Resolve Groq key: local .env first, then backend fallback
       String resolvedGroqKey = groqApiKey;
       if (resolvedGroqKey.isEmpty) {
-        final accessToken = AuthSessionManager.instance.accessToken?.trim() ?? '';
-        if (accessToken.isNotEmpty) {
-          resolvedGroqKey = await RealtimeSessionApi().fetchGroqKey(accessToken: accessToken) ?? '';
-        }
-      }
-      if (resolvedGroqKey.isEmpty) {
-        _statusMessage = 'No se pudo obtener la clave de Groq. Configura GROQ_API_KEY en el backend.';
+        _statusMessage = 'Conectando con el agente...';
         _safeNotify();
-        return;
+        _addLog('🔑 Conectando con el agente...');
+        final accessToken = AuthSessionManager.instance.accessToken?.trim() ?? '';
+        if (accessToken.isEmpty) {
+          _statusMessage = 'No estás autenticado. Inicia sesión primero.';
+          _safeNotify();
+          return;
+        }
+        resolvedGroqKey = await RealtimeSessionApi().fetchGroqKey(accessToken: accessToken) ?? '';
+        if (resolvedGroqKey.isEmpty) {
+          _statusMessage = 'No se pudo conectar con el agente. Verifica tu conexión.';
+          _safeNotify();
+          _addLog('❌ No se pudo conectar con el agente');
+          return;
+        }
+        _addLog('✅ Agente conectado');
       }
       _resolvedGroqKey = resolvedGroqKey;
+      final keyPreview = resolvedGroqKey.length > 12
+          ? '${resolvedGroqKey.substring(0, 12)}...${resolvedGroqKey.substring(resolvedGroqKey.length - 4)}'
+          : resolvedGroqKey;
+      _addLog('🔍 GROQ key resolved: $keyPreview (len=${resolvedGroqKey.length})');
     } else {
       micKey = await _resolveOpenAIToken();
       if (micKey.isEmpty) {
         _statusMessage =
-            'No se pudo obtener credenciales de OpenAI. Configura OPENAI_API_KEY en el backend.';
+            'No se pudo conectar con el agente.';
         _safeNotify();
         return;
       }
@@ -248,9 +260,9 @@ class RecordingSessionController extends ChangeNotifier {
     _lastMicTranscriptAt = null;
     _systemWordsAccum = 0;
     _systemWordsAtLastResponse = 0;
-    _statusMessage = 'Conectando con OpenAI';
+    _statusMessage = 'Conectando con el agente...';
 
-    _addLog('🟢 Conectando con OpenAI...');
+    _addLog('🟢 Conectando con el agente...');
     final promptPreview = promptOverride.length > 120
         ? '${promptOverride.substring(0, 120)}...'
         : promptOverride;
@@ -274,7 +286,7 @@ class RecordingSessionController extends ChangeNotifier {
     if (useGroqPipeline && _resolvedGroqKey.isNotEmpty) {
       // ── Full Groq pipeline: mic + system via Groq Whisper + Groq Llama 3.3 ──
       _groqPipelineActive = true;
-      _addLog('🔄 Pipeline completo Groq: mic y sistema sin OpenAI Realtime');
+      _addLog('🔄 Pipeline iniciado: mic y sistema');
 
       _groqClient = GroqTranscriptionClient(
         apiKey: _resolvedGroqKey,
@@ -362,7 +374,7 @@ class RecordingSessionController extends ChangeNotifier {
       }
     } catch (error) {
       _listening = false;
-      _statusMessage = 'No se pudo conectar con OpenAI: $error';
+      _statusMessage = 'No se pudo conectar con el agente: $error';
       _safeNotify();
       _timer?.cancel();
       _elapsed = Duration.zero;
@@ -371,10 +383,8 @@ class RecordingSessionController extends ChangeNotifier {
 
     _listening = true;
     _statusMessage = _systemOnlyMode
-        ? (_groqPipelineActive
-            ? 'Conectado (Groq + Groq Llama 3.3). Escuchando audio del sistema...'
-            : 'Conectado a OpenAI. Escuchando audio del sistema...')
-        : 'Conectado a OpenAI. Escuchando microfono...';
+        ? 'Conectado. Escuchando audio del sistema...'
+        : 'Conectado. Escuchando microfono...';
     _safeNotify();
     _scheduleSilenceAutoStop();
 
@@ -483,11 +493,15 @@ class RecordingSessionController extends ChangeNotifier {
         }
         if (key.isEmpty) {
           _statusMessage =
-              'No se pudo obtener credenciales de Groq. Configura GROQ_API_KEY en el backend.';
+              'No se pudo conectar con el agente.';
           _safeNotify();
           return;
         }
         _resolvedGroqKey = key;
+        final keyPreview = key.length > 12
+            ? '${key.substring(0, 12)}...${key.substring(key.length - 4)}'
+            : key;
+        _addLog('🔍 GROQ key resolved (chat-only): $keyPreview (len=${key.length})');
       }
       _chatClient = ChatCompletionClient(
         apiKey: _resolvedGroqKey,
@@ -771,12 +785,12 @@ class RecordingSessionController extends ChangeNotifier {
     final chat = _chatClient;
     if (groq == null || chat == null) return;
 
-    _addLog('🎙️ Groq: transcribiendo ${(pcmBytes.length / 48000).toStringAsFixed(1)}s de audio...');
+    _addLog('🎙️ Transcribiendo ${(pcmBytes.length / 48000).toStringAsFixed(1)}s de audio...');
 
     // 1. Transcribe with Groq
     final transcript = await groq.transcribe(pcmBytes);
     if (transcript == null || transcript.trim().isEmpty) {
-      _addLog('🔇 Groq: audio sin habla detectada');
+      _addLog('🔇 Audio sin habla detectada');
       return;
     }
 
@@ -784,7 +798,7 @@ class RecordingSessionController extends ChangeNotifier {
     _appendTranscriptDelta(transcript, source: 'sys');
     _appendTranscriptDelta('\n', source: 'sys');
 
-    _addLog('🖥️ Groq transcripción: "$transcript"');
+    _addLog('🖥️ Transcripción: "$transcript"');
 
     // 3. Build prompt with recent conversation context + RAG
     final recentTranscripts = <String>[];
@@ -819,7 +833,7 @@ class RecordingSessionController extends ChangeNotifier {
 
     // 4. Get response + suggestions in parallel from Groq Llama 3.3
     _currentResponse = '';
-    _addLog('🤖 Groq Llama 3.3: generando respuesta + sugerencias...');
+    _addLog('🤖 Generando respuesta + sugerencias...');
 
     final suggestionsClient = _suggestionsClient;
 
@@ -1330,7 +1344,7 @@ class RecordingSessionController extends ChangeNotifier {
     final modeDesc = systemAudioActive
         ? (includeMic ? 'sistema + micrófono' : 'sistema')
         : (includeMic ? 'solo micrófono (fallback)' : 'sin audio');
-    _statusMessage = 'EasyExpert iniciada: conectada a OpenAI ($modeDesc). Ya puedes hablar.';
+    _statusMessage = 'EasyExpert iniciada: conectada al agente ($modeDesc). Ya puedes hablar.';
     _safeNotify();
   }
 

@@ -66,15 +66,15 @@ class GroqTranscriptionClient {
         final json = jsonDecode(responseBody) as Map<String, dynamic>;
         final text = (json['text'] as String?)?.trim() ?? '';
         if (text.isNotEmpty) {
-          _log('Groq transcripción: "$text"');
+          _log('Transcripción: "$text"');
         }
         return text.isEmpty ? null : text;
       } else {
-        _log('Groq error ${response.statusCode}: $responseBody');
+        _log('Error de transcripción ${response.statusCode}: $responseBody');
         return null;
       }
     } catch (e) {
-      _log('Groq transcribe error: $e');
+      _log('Error de transcripción: $e');
       return null;
     }
   }

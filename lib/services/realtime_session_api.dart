@@ -61,12 +61,15 @@ class RealtimeSessionApi {
 
     try {
       final uri = Uri.parse(_baseUrl).resolve('/api/realtime/groq-key');
-      final request = await _httpClient.openUrl('GET', uri);
+      debugPrint('[RealtimeSessionApi] GET $uri');
+      final request = await _httpClient
+          .openUrl('GET', uri)
+          .timeout(const Duration(seconds: 10));
       request.headers.set(HttpHeaders.acceptHeader, 'application/json');
       request.headers.set(HttpHeaders.authorizationHeader, 'Bearer $token');
 
-      final response = await request.close();
-      final raw = await utf8.decodeStream(response);
+      final response = await request.close().timeout(const Duration(seconds: 10));
+      final raw = await utf8.decodeStream(response).timeout(const Duration(seconds: 5));
 
       if (response.statusCode < 200 || response.statusCode >= 300) {
         debugPrint('[RealtimeSessionApi] groq-key error (${response.statusCode}): $raw');

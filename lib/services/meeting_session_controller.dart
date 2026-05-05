@@ -160,15 +160,23 @@ class MeetingSessionController extends ChangeNotifier {
     // Resolve Groq key from backend
     String resolvedGroqKey = groqApiKey;
     if (resolvedGroqKey.isEmpty) {
-      final accessToken = AuthSessionManager.instance.accessToken?.trim() ?? '';
-      if (accessToken.isNotEmpty) {
-        resolvedGroqKey = await RealtimeSessionApi().fetchGroqKey(accessToken: accessToken) ?? '';
-      }
-    }
-    if (resolvedGroqKey.isEmpty) {
-      _statusMessage = 'No se pudo obtener credenciales de Groq.';
+      _statusMessage = 'Conectando con el agente...';
       _safeNotify();
-      return;
+      _addLog('🔑 Conectando con el agente...');
+      final accessToken = AuthSessionManager.instance.accessToken?.trim() ?? '';
+      if (accessToken.isEmpty) {
+        _statusMessage = 'No estás autenticado. Inicia sesión primero.';
+        _safeNotify();
+        return;
+      }
+      resolvedGroqKey = await RealtimeSessionApi().fetchGroqKey(accessToken: accessToken) ?? '';
+      if (resolvedGroqKey.isEmpty) {
+        _statusMessage = 'No se pudo conectar con el agente. Verifica tu conexión.';
+        _safeNotify();
+        _addLog('❌ No se pudo conectar con el agente');
+        return;
+      }
+      _addLog('✅ Agente conectado');
     }
 
     _groqClient?.close();
@@ -205,7 +213,7 @@ class MeetingSessionController extends ChangeNotifier {
     _wordsAtLastResponse = 0;
     _statusMessage = 'Conectando...';
 
-    _addLog('🟢 Modo Reunión: pipeline Groq (sin OpenAI)');
+    _addLog('🟢 Modo Reunión iniciado');
 
     // RAG context
     _ragContext = '';
@@ -402,7 +410,7 @@ class MeetingSessionController extends ChangeNotifier {
         }
       }
       if (resolvedGroqKey.isEmpty) {
-        _statusMessage = 'No se pudo obtener credenciales de Groq.';
+        _statusMessage = 'No se pudo conectar con el agente.';
         _safeNotify();
         return;
       }

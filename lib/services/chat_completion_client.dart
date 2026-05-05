@@ -88,7 +88,7 @@ class ChatCompletionClient {
 
       if (response.statusCode != 200) {
         final errorBody = await response.transform(utf8.decoder).join();
-        _log('ChatCompletion error ${response.statusCode}: $errorBody');
+        _log('Error del agente ${response.statusCode}: $errorBody');
         onError?.call(_friendlyError(response.statusCode, errorBody));
         onComplete?.call();
         return '';
@@ -134,7 +134,7 @@ class ChatCompletionClient {
       onComplete?.call();
       return responseText;
     } catch (e) {
-      _log('ChatCompletion error: $e');
+      _log('Error del agente: $e');
       onError?.call(_friendlyNetworkError(e));
       onComplete?.call();
       return '';
@@ -144,26 +144,26 @@ class ChatCompletionClient {
   String _friendlyError(int status, String body) {
     switch (status) {
       case 429:
-        return 'Límite de Groq alcanzado (rate limit). Espera unos segundos.';
+        return 'Demasiadas solicitudes. Espera unos segundos.';
       case 401:
-        return 'Clave Groq inválida o expirada.';
+        return 'Sesión del agente expirada. Reinicia la sesión.';
       case 503:
       case 502:
-        return 'Groq sobrecargado (cluster). Reintenta en breve.';
+        return 'El agente está sobrecargado. Reintenta en breve.';
       case 500:
-        return 'Error interno de Groq. Reintenta.';
+        return 'Error del agente. Reintenta.';
       default:
-        return 'Error Groq $status. Revisa logs.';
+        return 'Error del agente ($status). Revisa logs.';
     }
   }
 
   String _friendlyNetworkError(Object e) {
     final msg = e.toString().toLowerCase();
-    if (msg.contains('timeout')) return 'Timeout en Groq. Reintenta.';
+    if (msg.contains('timeout')) return 'Timeout del agente. Reintenta.';
     if (msg.contains('socket') || msg.contains('connection')) {
-      return 'Sin conexión a Groq. Verifica internet.';
+      return 'Sin conexión. Verifica internet.';
     }
-    return 'Error de red Groq. Revisa logs.';
+    return 'Error de red. Revisa logs.';
   }
 
   void _trimHistory() {

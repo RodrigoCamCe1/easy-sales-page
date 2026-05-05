@@ -454,44 +454,44 @@ class _RecordingBarState extends State<RecordingBar> {
                     return Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
-                        PlatformDragArea(
-                          child: Row(
-                            children: [
-                              Row(
-                                children: [
-                                  Container(
-                                    key: _keyPlayStop,
-                                    child: navIconButton(
-                                      Icons.play_arrow_rounded,
-                                      'Iniciar',
-                                      _controller.listening ? null : _startListening,
-                                    ),
+                        Row(
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  key: _keyPlayStop,
+                                  child: navIconButton(
+                                    Icons.play_arrow_rounded,
+                                    'Iniciar',
+                                    _controller.listening ? null : _startListening,
                                   ),
-                                  const SizedBox(width: 8),
-                                  navIconButton(
-                                    Icons.stop_rounded,
-                                    'Detener',
-                                    _controller.listening ? _stopListening : null,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  navIconButton(
-                                    Icons.settings_rounded,
-                                    'Configurar',
-                                    _toggleSettings,
-                                  ),
-                                  const SizedBox(width: 8),
-                                  navIconButton(
-                                    Icons.help_outline_rounded,
-                                    'Tutorial',
-                                    () {
-                                      OnboardingService.instance.reset('recording');
-                                      setState(() => _showOnboarding = true);
-                                    },
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(width: 10),
-                              Expanded(
+                                ),
+                                const SizedBox(width: 8),
+                                navIconButton(
+                                  Icons.stop_rounded,
+                                  'Detener',
+                                  _controller.listening ? _stopListening : null,
+                                ),
+                                const SizedBox(width: 8),
+                                navIconButton(
+                                  Icons.settings_rounded,
+                                  'Configurar',
+                                  _toggleSettings,
+                                ),
+                                const SizedBox(width: 8),
+                                navIconButton(
+                                  Icons.help_outline_rounded,
+                                  'Tutorial',
+                                  () {
+                                    OnboardingService.instance.reset('recording');
+                                    setState(() => _showOnboarding = true);
+                                  },
+                                ),
+                              ],
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: PlatformDragArea(
                                 child: Container(
                                   height: 28,
                                   alignment: Alignment.centerLeft,
@@ -506,28 +506,28 @@ class _RecordingBarState extends State<RecordingBar> {
                                   ),
                                 ),
                               ),
-                              Row(
-                                children: [
-                                  IconButton(
-                                    padding: EdgeInsets.zero,
-                                    visualDensity: VisualDensity.compact,
-                                    onPressed: () => _safeMinimize(),
-                                    icon: const Icon(Icons.remove_rounded),
-                                    tooltip: 'Minimizar',
-                                  ),
-                                  const SizedBox(width: 4),
-                                  IconButton(
-                                    padding: EdgeInsets.zero,
-                                    visualDensity: VisualDensity.compact,
-                                    onPressed: () =>
-                                        _requestMainAction('barCloseRequested'),
-                                    icon: const Icon(Icons.close_rounded),
-                                    tooltip: 'Cerrar',
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                            ),
+                            Row(
+                              children: [
+                                IconButton(
+                                  padding: EdgeInsets.zero,
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: () => _safeMinimize(),
+                                  icon: const Icon(Icons.remove_rounded),
+                                  tooltip: 'Minimizar',
+                                ),
+                                const SizedBox(width: 4),
+                                IconButton(
+                                  padding: EdgeInsets.zero,
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: () =>
+                                      _requestMainAction('barCloseRequested'),
+                                  icon: const Icon(Icons.close_rounded),
+                                  tooltip: 'Cerrar',
+                                ),
+                              ],
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 4),
                         const Divider(height: 0),
