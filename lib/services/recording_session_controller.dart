@@ -286,12 +286,14 @@ class RecordingSessionController extends ChangeNotifier {
       _chatClient = ChatCompletionClient(
         apiKey: _resolvedGroqKey,
         onLog: _addLog,
+        onError: _handleGroqError,
       );
       _chatClient!.setSystemPrompt(_buildChatOnlyPrompt());
 
       _suggestionsClient = ChatCompletionClient(
         apiKey: _resolvedGroqKey,
         onLog: _addLog,
+        onError: _handleGroqError,
       );
       _suggestionsClient!.setSystemPrompt(_buildSuggestionsOnlyPrompt());
 
@@ -490,6 +492,7 @@ class RecordingSessionController extends ChangeNotifier {
       _chatClient = ChatCompletionClient(
         apiKey: _resolvedGroqKey,
         onLog: _addLog,
+        onError: _handleGroqError,
       );
       _chatClient!.setSystemPrompt(_buildChatOnlyPrompt());
     }
@@ -2198,6 +2201,12 @@ class RecordingSessionController extends ChangeNotifier {
     if (_debugLogs.length > 500) _debugLogs.removeAt(0);
   }
 
+  void _handleGroqError(String userMessage) {
+    _addLog('⚠️ $userMessage');
+    _statusMessage = userMessage;
+    _safeNotify();
+  }
+
   bool _isShortInterjection(String text) {
     final t = text.trim();
     if (t.isEmpty) return true;
@@ -2214,6 +2223,8 @@ class RecordingSessionController extends ChangeNotifier {
   DateTime? _lastLevelLogMic;
 
   void _logAudioLevel(Uint8List bytes, {String label = 'unknown'}) {
+    return;
+    // ignore: dead_code
     if (bytes.length < 2) return;
     final now = DateTime.now();
     // Rate-limit per device independently

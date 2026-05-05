@@ -13,6 +13,7 @@ class ChatCompletionClient {
     this.baseUrl = 'https://api.groq.com/openai/v1/chat/completions',
     this.maxTokens = 3000,
     this.onLog,
+    this.onError,
   });
 
   final String apiKey;
@@ -20,6 +21,10 @@ class ChatCompletionClient {
   final String baseUrl;
   final int maxTokens;
   final void Function(String)? onLog;
+
+  /// Called when API returns non-200 or network error.
+  /// Receives user-friendly error message (e.g. "Límite de Groq alcanzado").
+  final void Function(String userMessage)? onError;
 
   HttpClient _httpClient = HttpClient();
   bool _closed = false;
@@ -84,6 +89,7 @@ class ChatCompletionClient {
       if (response.statusCode != 200) {
         final errorBody = await response.transform(utf8.decoder).join();
         _log('ChatCompletion error ${response.statusCode}: $errorBody');
+        onError?.call(_friendlyError(response.statusCode, errorBody));
         onComplete?.call();
         return '';
       }
@@ -129,9 +135,35 @@ class ChatCompletionClient {
       return responseText;
     } catch (e) {
       _log('ChatCompletion error: $e');
+      onError?.call(_friendlyNetworkError(e));
       onComplete?.call();
       return '';
     }
+  }
+
+  String _friendlyError(int status, String body) {
+    switch (status) {
+      case 429:
+        return 'Límite de Groq alcanzado (rate limit). Espera unos segundos.';
+      case 401:
+        return 'Clave Groq inválida o expirada.';
+      case 503:
+      case 502:
+        return 'Groq sobrecargado (cluster). Reintenta en breve.';
+      case 500:
+        return 'Error interno de Groq. Reintenta.';
+      default:
+        return 'Error Groq $status. Revisa logs.';
+    }
+  }
+
+  String _friendlyNetworkError(Object e) {
+    final msg = e.toString().toLowerCase();
+    if (msg.contains('timeout')) return 'Timeout en Groq. Reintenta.';
+    if (msg.contains('socket') || msg.contains('connection')) {
+      return 'Sin conexión a Groq. Verifica internet.';
+    }
+    return 'Error de red Groq. Revisa logs.';
   }
 
   void _trimHistory() {

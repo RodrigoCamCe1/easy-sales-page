@@ -50,7 +50,7 @@ class AudioVadBuffer {
       if (!_isSpeaking) {
         _isSpeaking = true;
         _speechStartTime = DateTime.now();
-        onLog?.call('VAD: habla detectada (${db.toStringAsFixed(0)} dB)');
+        onLog?.call('VAD: habla detectada');
       }
       _lastSpeechTime = DateTime.now();
       _silenceTimer?.cancel();
