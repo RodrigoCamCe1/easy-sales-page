@@ -2,7 +2,7 @@
 ; Generates a Windows installer for the Flutter desktop app
 
 #define MyAppName "EasyExpert"
-#define MyAppVersion "1.5.0"
+#define MyAppVersion "1.5.1"
 #define MyAppPublisher "EasySales IA"
 #define MyAppExeName "EasyExpert.exe"
 
